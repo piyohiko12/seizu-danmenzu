@@ -132,6 +132,17 @@ class Part:
         self.holes.append({'name': name, 'cx': cx, 'cy': cy, 'sections': secs})
         return self
 
+    def round_features(self):
+        """穴と円柱の一覧。中心線が引かれているかの検算に使う。"""
+        out = [{"name": h['name'], "cx": _r(h['cx']), "cy": _r(h['cy']),
+                "r": max(s['r'] for s in h['sections']),
+                "z": [min(s['z'][0] for s in h['sections']),
+                      max(s['z'][1] for s in h['sections'])], "kind": "hole"}
+               for h in self.holes]
+        out += [{"name": c['name'], "cx": _r(c['cx']), "cy": _r(c['cy']),
+                 "r": c['r'], "z": list(c['z']), "kind": "cyl"} for c in self.cyls]
+        return out
+
     # ── 占有の計算 ──────────────────────────────────────────
     def _front_occ(self):
         """正面図の各マスにある材料の奥行（角柱のみ。円柱と穴は円として別に描く）。

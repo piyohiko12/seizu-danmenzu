@@ -2011,6 +2011,41 @@
         "F"
       ]
     ],
+    "round": [
+      {
+        "name": "柱の貫通穴 φ3",
+        "cx": 6.0,
+        "cy": 4.5,
+        "r": 1.5,
+        "z": [
+          2,
+          6
+        ],
+        "kind": "hole"
+      },
+      {
+        "name": "取付穴 φ2 左",
+        "cx": 2.0,
+        "cy": 10.5,
+        "r": 1.0,
+        "z": [
+          0,
+          8
+        ],
+        "kind": "hole"
+      },
+      {
+        "name": "取付穴 φ2 右",
+        "cx": 10.0,
+        "cy": 10.5,
+        "r": 1.0,
+        "z": [
+          0,
+          8
+        ],
+        "kind": "hole"
+      }
+    ],
     "note": "tools/make_problems.py が生成。部品は tools/solid.py の Part に一度だけ宣言し、正面図・側面図・断面図をそこから導いている。穴は奥行と半径で宣言し、面の分け方は自動。answer.lines は boundary(body)、boundary(cut)、穴の面ごとの boundary の和集合。answer.hatch は cut からリブなどを除いたもの。"
   }
 }

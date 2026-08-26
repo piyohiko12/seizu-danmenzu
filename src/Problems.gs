@@ -2034,6 +2034,41 @@ var Problems = (function () {
           "F"
         ]
       ],
+      "round": [
+        {
+          "name": "中心の穴",
+          "cx": 5.0,
+          "cy": 5.5,
+          "r": 2.5,
+          "z": [
+            0,
+            2
+          ],
+          "kind": "hole"
+        },
+        {
+          "name": "取付穴 φ2 左",
+          "cx": 2.5,
+          "cy": 14.5,
+          "r": 1.0,
+          "z": [
+            0,
+            6
+          ],
+          "kind": "hole"
+        },
+        {
+          "name": "取付穴 φ2 右",
+          "cx": 7.5,
+          "cy": 14.5,
+          "r": 1.0,
+          "z": [
+            0,
+            6
+          ],
+          "kind": "hole"
+        }
+      ],
       "note": "tools/make_problems.py が生成。部品は tools/solid.py の Part に一度だけ宣言し、正面図・側面図・断面図をそこから導いている。穴は奥行と半径で宣言し、面の分け方は自動。answer.lines は boundary(body)、boundary(cut)、穴の面ごとの boundary の和集合。answer.hatch は cut からリブなどを除いたもの。"
     }
   },
@@ -4049,6 +4084,41 @@ var Problems = (function () {
           11,
           "F"
         ]
+      ],
+      "round": [
+        {
+          "name": "柱の貫通穴 φ3",
+          "cx": 6.0,
+          "cy": 4.5,
+          "r": 1.5,
+          "z": [
+            2,
+            6
+          ],
+          "kind": "hole"
+        },
+        {
+          "name": "取付穴 φ2 左",
+          "cx": 2.0,
+          "cy": 10.5,
+          "r": 1.0,
+          "z": [
+            0,
+            8
+          ],
+          "kind": "hole"
+        },
+        {
+          "name": "取付穴 φ2 右",
+          "cx": 10.0,
+          "cy": 10.5,
+          "r": 1.0,
+          "z": [
+            0,
+            8
+          ],
+          "kind": "hole"
+        }
       ],
       "note": "tools/make_problems.py が生成。部品は tools/solid.py の Part に一度だけ宣言し、正面図・側面図・断面図をそこから導いている。穴は奥行と半径で宣言し、面の分け方は自動。answer.lines は boundary(body)、boundary(cut)、穴の面ごとの boundary の和集合。answer.hatch は cut からリブなどを除いたもの。"
     }
@@ -6122,6 +6192,41 @@ var Problems = (function () {
           9,
           "F"
         ]
+      ],
+      "round": [
+        {
+          "name": "段付き穴",
+          "cx": 6.0,
+          "cy": 6.0,
+          "r": 3,
+          "z": [
+            0,
+            8
+          ],
+          "kind": "hole"
+        },
+        {
+          "name": "フランジ φ12",
+          "cx": 6.0,
+          "cy": 6.0,
+          "r": 6,
+          "z": [
+            0,
+            2
+          ],
+          "kind": "cyl"
+        },
+        {
+          "name": "胴 φ8",
+          "cx": 6.0,
+          "cy": 6.0,
+          "r": 4,
+          "z": [
+            2,
+            8
+          ],
+          "kind": "cyl"
+        }
       ],
       "note": "tools/make_problems.py が生成。部品は tools/solid.py の Part に一度だけ宣言し、正面図・側面図・断面図をそこから導いている。穴は奥行と半径で宣言し、面の分け方は自動。answer.lines は boundary(body)、boundary(cut)、穴の面ごとの boundary の和集合。answer.hatch は cut からリブなどを除いたもの。"
     }

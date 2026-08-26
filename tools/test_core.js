@@ -249,6 +249,37 @@ PROBLEMS.forEach(p => {
     eq(cutOf(p).map(cellKey).sort(), p.authoring.cut.map(cellKey).sort());
   });
 
+  t(label + ': 丸い形にはすべて中心線が交わっている', () => {
+    // ★ 円（穴・円柱）には、直交する 2 本の中心線を引く。手で足していると
+    //    穴を増やすたびに漏れるので、形の宣言から生えているかを確かめる。
+    const front = p.views.find(v => v.name === '正面図');
+    const side = p.views.find(v => v.name === '側面図');
+    const centers = v => (v ? v.lines.filter(s => s.kind === 'center') : []);
+    const covers = (s, fixed, from, to, horizontal) => {
+      const [a, b] = [s.a, s.b];
+      if (horizontal) {
+        return a[1] === fixed && b[1] === fixed
+            && Math.min(a[0], b[0]) <= from && Math.max(a[0], b[0]) >= to;
+      }
+      return a[0] === fixed && b[0] === fixed
+          && Math.min(a[1], b[1]) <= from && Math.max(a[1], b[1]) >= to;
+    };
+    const missing = [];
+    (p.authoring.round || []).forEach(f => {
+      const fc = centers(front);
+      if (!fc.some(s => covers(s, f.cy, f.cx - f.r, f.cx + f.r, true))) {
+        missing.push(f.name + ' の正面図の横');
+      }
+      if (!fc.some(s => covers(s, f.cx, f.cy - f.r, f.cy + f.r, false))) {
+        missing.push(f.name + ' の正面図の縦');
+      }
+      if (!centers(side).some(s => covers(s, f.cy, f.z[0], f.z[1], true))) {
+        missing.push(f.name + ' の側面図');
+      }
+    });
+    eq(missing, [], '中心線の描き漏れ');
+  });
+
   t(label + ': 断面図の外形は側面図にも現れる', () => {
     // 投影図と答えの突き合わせ。断面図の外形（部品のシルエット）は、
     // 側面図にも同じ位置に出るはず。片方だけ直すとここで落ちる。

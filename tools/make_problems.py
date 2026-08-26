@@ -25,7 +25,7 @@ def add(p):
     return p
 
 
-def AUTHORING(body, hole, cut):
+def AUTHORING(body, hole, cut, part=None):
     """検算に使う作問データ。
 
     body  … 断面図に現れる部品の外形
@@ -37,6 +37,7 @@ def AUTHORING(body, hole, cut):
         "voids": [{"name": f["name"], "z": list(f["z"]), "r": f["r"],
                    "cells": sorted([list(c) for c in f["cells"]])} for f in hole],
         "cut": [[c, r, sh] for c, r, sh in sorted(cut)],
+        "round": part.round_features() if part else [],
         "note": ("tools/make_problems.py が生成。部品は tools/solid.py の Part に一度だけ宣言し、"
                  "正面図・側面図・断面図をそこから導いている。穴は奥行と半径で宣言し、"
                  "面の分け方は自動。answer.lines は boundary(body)、boundary(cut)、"
@@ -119,7 +120,7 @@ def bracket():
                     "（JIS B 0001）により、輪郭線だけを描きます。"
                     "底板の 2 つの取付穴は切断線から外れた位置にあるため、この断面には現れません"
                     "（断面図ではかくれ線を原則省略します）。"),
-        "authoring": AUTHORING(body, hole, cut)
+        "authoring": AUTHORING(body, hole, cut, part)
     })
 
 
@@ -184,7 +185,7 @@ def pedestal():
                     "柱の外形線は穴の位置でも途切れません。"
                     "底板の 2 つの取付穴は切断線から外れた位置にあるため、この断面には現れません。"
                     "この問題にはリブがないので、切り口はすべてハッチングを施します。"),
-        "authoring": AUTHORING(body, hole, cut)
+        "authoring": AUTHORING(body, hole, cut, part)
     })
 
 
@@ -248,7 +249,7 @@ def bearing():
                     "断面図ではかくれ線を省略するので、側面図の破線をそのまま写してはいけません。"
                     "この部品は軸受（穴のあいた側）なので、切り口にはハッチングを施します"
                     "（ハッチングを施さないのは、軸そのものを長手方向に切断した場合です）。"),
-        "authoring": AUTHORING(body, hole, cut)
+        "authoring": AUTHORING(body, hole, cut, part)
     })
 
 
