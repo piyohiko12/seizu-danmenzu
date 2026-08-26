@@ -47,6 +47,34 @@ h1{font-size:clamp(18px,3vw,23px);font-weight:700;}
 .timer{font-family:"IBM Plex Mono",monospace;font-size:15px;font-variant-numeric:tabular-nums;color:var(--ink-2);}
 .instruction{margin:16px 0 0;color:var(--ink-2);max-width:70ch;}
 
+/* ── 利用者の識別 ── */
+.idbar{
+  display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;
+  margin-top:14px;padding:9px 14px;background:var(--surface);border:1px solid var(--rule);
+  font-size:13.5px;
+}
+.idbar[hidden]{display:none;}
+.idbar.needs{border-color:var(--ng);background:var(--surface);}
+.idlbl{
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.1em;
+  color:var(--ink-3);text-transform:uppercase;
+}
+.idwho{color:var(--ink);font-weight:700;}
+.idwho[hidden]{display:none;}
+.idform{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0;}
+.idform[hidden]{display:none;}
+.idform input{
+  font-family:inherit;font-size:13.5px;padding:6px 10px;
+  background:var(--paper);color:var(--ink);border:1px solid var(--rule);
+}
+.idform input:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.idform #idClass{width:170px;}
+.idform #idNo{width:96px;}
+.idlink{border:0;background:none;color:var(--accent);font-size:12.5px;padding:2px 4px;
+  text-decoration:underline;cursor:pointer;}
+.idlink[hidden]{display:none;}
+.idnote{color:var(--ink-3);font-size:12.5px;}
+
 /* ── 作業領域 ── */
 .work{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,auto);gap:18px;margin-top:18px;align-items:stretch;}
 @media (max-width:900px){.work{grid-template-columns:1fr;}}

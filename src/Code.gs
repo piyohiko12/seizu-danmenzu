@@ -19,6 +19,15 @@ function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
+/** 画面に表示する利用者の識別情報を返す（メールアドレスか、匿名モードの指示か）。 */
+function apiGetIdentity() {
+  try {
+    return { ok: true, identity: Auth.identity() };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 /** 問題を 1 問返す。Phase 1 では正解も同送し、採点はクライアントで行う。 */
 function apiGetProblem(problemId) {
   try {

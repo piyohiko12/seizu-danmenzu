@@ -14,6 +14,17 @@
     <div class="timer mono" id="timer" aria-label="経過時間">00:00</div>
   </header>
 
+  <div class="idbar" id="idbar" hidden>
+    <span class="idlbl">記録する名前</span>
+    <span class="idwho" id="idWho" hidden></span>
+    <button type="button" class="idlink" id="idChange" hidden>変更</button>
+    <form class="idform" id="idForm" hidden>
+      <input type="text" id="idClass" placeholder="クラス（例 3年A組）" maxlength="20" autocomplete="off">
+      <input type="text" id="idNo" placeholder="出席番号" inputmode="numeric" maxlength="4" autocomplete="off">
+      <button type="submit">決定</button>
+    </form>
+  </div>
+
   <p class="instruction" id="pInstruction"></p>
 
   <div class="work">

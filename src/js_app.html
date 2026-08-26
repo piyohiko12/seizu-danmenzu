@@ -11,6 +11,12 @@
   var $ = function (id) { return document.getElementById(id); };
   var problem = null, sheet = null, startedAt = 0, timerId = null, hintUsed = 0;
 
+  // 利用者の識別（D-2: Google アカウント／匿名の両対応）
+  var ANON_STORE = 'sec.anon';
+  var identity = { mode: 'anon', email: '' };
+  var anon = null;         // {cls, no}
+  var pendingLog = null;   // 匿名キー未入力のまま採点したときの記録待ち
+
   // ── サーバ呼び出し（無ければローカルデータへ退避）──────────
   function call(fn, args) {
     return new Promise(function (resolve, reject) {
@@ -22,6 +28,15 @@
     });
   }
 
+  function loadIdentity() {
+    return call('apiGetIdentity').then(function (res) {
+      if (!res.ok) throw new Error(res.error);
+      return res.identity;
+    }).catch(function () {
+      return { mode: 'anon', email: '' };   // サーバが無いローカル確認時など
+    });
+  }
+
   function loadProblem(id) {
     return call('apiGetProblem', [id]).then(function (res) {
       if (!res.ok) throw new Error(res.error);
@@ -30,6 +45,85 @@
       if (window.__LOCAL_PROBLEM__) return window.__LOCAL_PROBLEM__;
       throw new Error('問題を読み込めませんでした。');
     });
+  }
+
+  // ── 利用者の識別 ──────────────────────────────────────────
+  function anonKeyOf(a) { return a ? a.cls + '-' + a.no : ''; }
+
+  function readStoredAnon() {
+    // HtmlService の iframe はオリジンが変わることがあり、読めない場合もある。
+    // そのときは入力し直してもらうだけなので、失敗しても動作に影響はない。
+    try {
+      var v = localStorage.getItem(ANON_STORE);
+      return v ? JSON.parse(v) : null;
+    } catch (err) { return null; }
+  }
+
+  function writeStoredAnon(a) {
+    try { localStorage.setItem(ANON_STORE, JSON.stringify(a)); } catch (err) { /* 保存できなくても可 */ }
+  }
+
+  function renderIdentity() {
+    $('idbar').hidden = false;
+    var who = $('idWho'), form = $('idForm'), change = $('idChange');
+
+    if (identity.mode === 'google') {
+      who.hidden = false;
+      who.textContent = identity.email;
+      form.hidden = true;
+      change.hidden = true;
+      return;
+    }
+    if (anon) {
+      who.hidden = false;
+      who.textContent = anon.cls + '　' + anon.no + ' 番';
+      form.hidden = true;
+      change.hidden = false;
+    } else {
+      who.hidden = true;
+      form.hidden = false;
+      change.hidden = true;
+    }
+  }
+
+  function wireIdentity() {
+    $('idForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var cls = $('idClass').value.trim(), no = $('idNo').value.trim();
+      if (!cls || !no) { toast('クラスと出席番号の両方を入力してください。'); return; }
+      anon = { cls: cls, no: no };
+      writeStoredAnon(anon);
+      $('idbar').classList.remove('needs');
+      renderIdentity();
+      flushPending();
+    });
+    $('idChange').addEventListener('click', function () {
+      if (anon) { $('idClass').value = anon.cls; $('idNo').value = anon.no; }
+      anon = null;
+      renderIdentity();
+      $('idClass').focus();
+    });
+  }
+
+  /** 解答ログを送る。匿名モードで名前が未入力なら、入力されるまで保留する。 */
+  function sendLog(rec) {
+    if (identity.mode === 'anon' && !anonKeyOf(anon)) {
+      pendingLog = rec;
+      $('idbar').classList.add('needs');
+      toast('記録するには、クラスと出席番号を入力してください。');
+      return;
+    }
+    rec.meta.anonKey = anonKeyOf(anon);
+    call('apiSubmit', [rec.problemId, rec.answer, rec.result, rec.meta]).catch(function () {
+      // 記録できなくても採点結果の表示は続ける（ローカル確認時など）。
+    });
+  }
+
+  function flushPending() {
+    if (!pendingLog) return;
+    var rec = pendingLog;
+    pendingLog = null;
+    sendLog(rec);
   }
 
   // ── 表示 ──────────────────────────────────────────────────
@@ -171,9 +265,9 @@
     sheet.setLocked(true);
     $('btnGrade').disabled = true;
 
-    var meta = { elapsedSec: elapsed(), hintUsed: hintUsed };
-    call('apiSubmit', [problem.id, answer, result, meta]).catch(function () {
-      // 記録できなくても採点結果の表示は続ける（ローカル確認時など）。
+    sendLog({
+      problemId: problem.id, answer: answer, result: result,
+      meta: { elapsedSec: elapsed(), hintUsed: hintUsed }
     });
   }
 
@@ -227,8 +321,13 @@
   // ── 起動 ──────────────────────────────────────────────────
   function boot() {
     var id = (typeof BOOT_PROBLEM_ID !== 'undefined' && BOOT_PROBLEM_ID) || null;
-    loadProblem(id).then(function (p) {
-      problem = p;
+    Promise.all([loadProblem(id), loadIdentity()]).then(function (r) {
+      problem = r[0];
+      identity = r[1];
+      if (identity.mode === 'anon') anon = readStoredAnon();
+      renderIdentity();
+      wireIdentity();
+      var p = problem;
       $('pTitle').textContent = p.title;
       $('pMeta').textContent = (CATEGORY[p.category] || p.category) + '　レベル ' + p.level;
       $('pInstruction').textContent = p.instruction || '';
