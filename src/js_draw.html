@@ -38,7 +38,6 @@ var SecDraw = (function () {
     var pad = opts.pad === undefined ? 16 : opts.pad;
     var editable = !!opts.editable;
     var onChange = opts.onChange || function () {};
-    var patternId = 'hx-' + Math.random().toString(36).slice(2, 8);
 
     var svg = el('svg', {
       viewBox: (-pad) + ' ' + (-pad) + ' ' + (cols * pitch + pad * 2) + ' ' + (rows * pitch + pad * 2),
@@ -47,15 +46,6 @@ var SecDraw = (function () {
       role: 'img'
     });
     svg.style.touchAction = 'none';
-
-    var defs = el('defs');
-    var pat = el('pattern', {
-      id: patternId, width: 8, height: 8,
-      patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)'
-    });
-    pat.appendChild(el('line', { x1: 0, y1: 0, x2: 0, y2: 8, class: 'hatch-line' }));
-    defs.appendChild(pat);
-    svg.appendChild(defs);
 
     var L = {};
     ['grid', 'hatch', 'hint', 'answer', 'diff', 'line', 'dots', 'ghost'].forEach(function (n) {
@@ -119,10 +109,22 @@ var SecDraw = (function () {
       lines.forEach(function (k, key) { L.line.appendChild(segEl(key, k, 'seg')); });
     }
 
-    function hatchRect(c, r, cls) {
+    /**
+     * ハッチングは 1 マスにつき 45° の線を 1 本引く。
+     * マスの対角線（左下 → 右上）なので、隣り合うマスの線が端点でつながり、
+     * 領域全体では方眼のピッチで等間隔に並ぶ 45° のハッチングになる。
+     */
+    function hatchMark(c, r) {
+      return el('line', {
+        x1: c * pitch, y1: (r + 1) * pitch,
+        x2: (c + 1) * pitch, y2: r * pitch,
+        class: 'hatch-seg'
+      });
+    }
+
+    function cellRect(c, r, cls) {
       return el('rect', {
-        x: c * pitch, y: r * pitch, width: pitch, height: pitch,
-        fill: cls ? null : 'url(#' + patternId + ')', class: cls || 'hatch-cell'
+        x: c * pitch, y: r * pitch, width: pitch, height: pitch, class: cls
       });
     }
 
@@ -130,7 +132,7 @@ var SecDraw = (function () {
       clear(L.hatch);
       hatch.forEach(function (key) {
         var v = key.split(',').map(Number);
-        L.hatch.appendChild(hatchRect(v[0], v[1]));
+        L.hatch.appendChild(hatchMark(v[0], v[1]));
       });
     }
 
@@ -201,10 +203,10 @@ var SecDraw = (function () {
     function showDiff(diff) {
       clear(L.diff);
       (diff.missingHatch || []).forEach(function (c) {
-        L.diff.appendChild(hatchRect(c[0], c[1], 'cell-missing'));
+        L.diff.appendChild(cellRect(c[0], c[1], 'cell-missing'));
       });
       (diff.extraHatch || []).forEach(function (c) {
-        L.diff.appendChild(hatchRect(c[0], c[1], 'cell-extra'));
+        L.diff.appendChild(cellRect(c[0], c[1], 'cell-extra'));
       });
       (diff.missingLines || []).forEach(function (s) {
         L.diff.appendChild(el('line', {
@@ -231,8 +233,9 @@ var SecDraw = (function () {
     function showAnswer(ansLines, ansHatch) {
       clear(L.answer);
       (ansHatch || []).forEach(function (c) {
-        L.answer.appendChild(el('rect', {
-          x: c[0] * pitch, y: c[1] * pitch, width: pitch, height: pitch, class: 'ans-hatch'
+        L.answer.appendChild(el('line', {
+          x1: c[0] * pitch, y1: (c[1] + 1) * pitch,
+          x2: (c[0] + 1) * pitch, y2: c[1] * pitch, class: 'ans-hatch'
         }));
       });
       (ansLines || []).forEach(function (s) {
