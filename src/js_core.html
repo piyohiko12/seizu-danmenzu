@@ -120,6 +120,8 @@ var SecCore = (function () {
         userLines.forEach(function (kind) { if (kind === t.lineKind) hit = true; });
       } else if (t.check === 'segments-present') {
         hit = (t.segments || []).some(function (s) { return userLines.has(segKey(s[0], s[1])); });
+      } else if (t.check === 'segments-missing') {
+        hit = (t.segments || []).some(function (s) { return !userLines.has(segKey(s[0], s[1])); });
       } else if (t.check === 'hatch-missing-cells') {
         hit = (t.cells || []).every(function (c) { return !userHatch.has(cellKey(c)); });
       }

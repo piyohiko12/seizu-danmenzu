@@ -28,6 +28,15 @@ function apiGetIdentity() {
   }
 }
 
+/** 問題の一覧を返す。正解データは含めない。 */
+function apiGetProblemList() {
+  try {
+    return { ok: true, list: Problems.list() };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 /** 問題を 1 問返す。Phase 1 では正解も同送し、採点はクライアントで行う。 */
 function apiGetProblem(problemId) {
   try {

@@ -1,6 +1,6 @@
 /**
  * GAS を使わずにブラウザで画面を確認するための HTML を組み立てる。
- *   node tools/build_preview.js [出力パス] [--demo]
+ *   node tools/build_preview.js [出力パス] [--demo|--correct] [--problem=<id>]
  *
  * index.html のテンプレート構文（<?!= include('x') ?>）を解決し、
  * 問題データを window.__LOCAL_PROBLEM__ として埋め込む。
@@ -15,9 +15,16 @@ const ROOT = path.join(__dirname, '..');
 const out = process.argv[2] || path.join(ROOT, 'build/preview.html');
 const demo = process.argv.includes('--demo');
 const correct = process.argv.includes('--correct');
+const wantId = (process.argv.find(a => a.startsWith('--problem=')) || '').split('=')[1];
 
-const problem = JSON.parse(
-  fs.readFileSync(path.join(ROOT, 'docs/samples/problem_a_full_section.json'), 'utf8'));
+const SAMPLES = path.join(ROOT, 'docs/samples');
+const problems = fs.readdirSync(SAMPLES).filter(f => f.endsWith('.json')).sort()
+  .map(f => JSON.parse(fs.readFileSync(path.join(SAMPLES, f), 'utf8')));
+const problem = (wantId && problems.find(p => p.id === wantId)) || problems[0];
+if (wantId && problem.id !== wantId) {
+  console.error('問題 ' + wantId + ' が見つかりません。' + problems.map(p => p.id).join(', ') + ' から選んでください。');
+  process.exit(1);
+}
 
 let body = fs.readFileSync(path.join(ROOT, 'src/index.html'), 'utf8');
 body = body.replace(/<\?!=\s*include\('([^']+)'\);?\s*\?>/g,
@@ -47,7 +54,7 @@ const html = `<!doctype html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>製図・断面図トレーニング（ローカル確認）</title></head>
 <body>
-<script>window.__SEC_TEST__ = true; window.__LOCAL_PROBLEM__ = ${JSON.stringify(problem)};</script>
+<script>window.__SEC_TEST__ = true; window.__LOCAL_PROBLEMS__ = ${JSON.stringify(problems)};</script>
 ${body}
 ${demoScript}
 </body></html>

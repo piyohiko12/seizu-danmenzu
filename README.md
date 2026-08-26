@@ -30,6 +30,7 @@ Phase 1 でできること — 投影図（正面図・側面図・切断線 A-A
 node tools/build_preview.js          # build/preview.html を生成
 node tools/build_preview.js build/demo.html --demo      # 誤答を入れて採点済みの状態
 node tools/build_preview.js build/ans.html  --correct   # 正解を入れた状態
+node tools/build_preview.js build/x.html --correct --problem=sec-a-003   # 問題を指定
 ```
 
 生成された HTML をブラウザで開く。
@@ -40,13 +41,15 @@ node tools/build_preview.js build/ans.html  --correct   # 正解を入れた状�
 node tools/test_core.js
 ```
 
-**サンプル問題を作り直す**
+**問題データを作り直す**
 
 ```bash
-python3 tools/make_sample_problem.py   # docs/samples/problem_a_full_section.json を再生成
+python3 tools/make_problems.py   # docs/samples/*.json と src/Problems.gs を再生成
 ```
 
-問題データを変えたら `src/Problems.gs` の `SEC_A_001` にも同じ JSON を反映すること。
+問題は `tools/make_problems.py` に**部品の形状として**定義する。切り口をセル集合で書けば、
+外形線とハッチング範囲は機械的に導出される（座標を手で並べると投影図と断面図が必ずずれる）。
+`src/Problems.gs` は生成物なので直接編集しない。
 
 **GAS へデプロイする**
 
@@ -80,7 +83,15 @@ clasp deploy -d "v0.1.0 MVP"
 | 04 | [データモデルと採点方式](docs/04_データモデルと採点.md) | 座標系／線分の正規化／問題 JSON スキーマ／採点アルゴリズム／フィードバック規則 |
 | 05 | [開発ロードマップ](docs/05_ロードマップ.md) | フェーズ計画／完了条件／リスク／決定事項 |
 
-サンプル問題: [`docs/samples/problem_a_full_section.json`](docs/samples/problem_a_full_section.json)
+### 収録している問題
+
+| ID | 題材 | レベル | 主に問う点 |
+|---|---|---|---|
+| [sec-a-001](docs/samples/sec-a-001.json) | L 形ブラケット | 2 | **リブは長手方向に切断してもハッチングを施さない**／手前面の座ぐり／切断線から外れた穴は現れない |
+| [sec-a-002](docs/samples/sec-a-002.json) | T 形の台座 | 2 | 左右対称の切り口／柱と底板の段差／貫通穴で切り口が上下に分かれる |
+| [sec-a-003](docs/samples/sec-a-003.json) | 段付き軸受 | 3 | 回転体の上下対称／段付き穴と外形の段差／正面図のかくれ線の読み取り |
+
+問題は画面右上のセレクタで切り替えられる（`?p=sec-a-003` のように URL でも指定できる）。
 
 ### 決まっていること
 
@@ -112,7 +123,7 @@ clasp deploy -d "v0.1.0 MVP"
 │   ├── appsscript.json
 │   ├── Code.gs               # doGet / include / API エントリ
 │   ├── Auth.gs               # 利用者の識別（Google アカウント／匿名の両対応）
-│   ├── Problems.gs           # 問題データ（Phase 2 でスプレッドシートへ移す）
+│   ├── Problems.gs           # 問題データ（tools/make_problems.py が生成）
 │   ├── ResultRepo.gs         # 解答ログの追記（LockService）
 │   ├── index.html            # 画面テンプレート
 │   ├── css.html
@@ -120,8 +131,9 @@ clasp deploy -d "v0.1.0 MVP"
 │   ├── js_draw.html          # SVG 作図エンジン
 │   └── js_app.html           # 画面の組み立てと配線
 ├── tools/
-│   ├── test_core.js          # 採点ロジックの単体テスト
+│   ├── test_core.js          # 採点ロジックの単体テストと問題データの検算
 │   ├── build_preview.js      # GAS なしでブラウザ確認する HTML を生成
-│   └── make_sample_problem.py# サンプル問題の生成
+│   ├── problem_lib.py        # 切り口のセル集合から外形線を導く共通処理
+│   └── make_problems.py      # 問題データの定義と生成
 └── .clasp.json.example
 ```

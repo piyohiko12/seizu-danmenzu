@@ -2,20 +2,28 @@
 /**
  * 画面の組み立てと配線。
  *
- * サーバ（google.script.run）が無い環境では window.__LOCAL_PROBLEM__ を使って
+ * サーバ（google.script.run）が無い環境では window.__LOCAL_PROBLEMS__ を使って
  * そのまま動く。tools/build_preview.js がローカル確認用の HTML を作る。
  */
 (function () {
   'use strict';
 
   var $ = function (id) { return document.getElementById(id); };
-  var problem = null, sheet = null, startedAt = 0, timerId = null, hintUsed = 0;
+
+  var problem = null, problemList = [], sheet = null;
+  var startedAt = 0, hintUsed = 0;
+  var curTool = 'line', curKind = 'outline';
 
   // 利用者の識別（D-2: Google アカウント／匿名の両対応）
   var ANON_STORE = 'sec.anon';
   var identity = { mode: 'anon', email: '' };
   var anon = null;         // {cls, no}
   var pendingLog = null;   // 匿名キー未入力のまま採点したときの記録待ち
+
+  var CATEGORY = {
+    full: '全断面図', half: '片側断面図', partial: '部分断面図',
+    revolved: '回転図示断面図', offset: '組合せによる断面図'
+  };
 
   // ── サーバ呼び出し（無ければローカルデータへ退避）──────────
   function call(fn, args) {
@@ -28,12 +36,16 @@
     });
   }
 
-  function loadIdentity() {
-    return call('apiGetIdentity').then(function (res) {
+  function localProblems() { return window.__LOCAL_PROBLEMS__ || []; }
+
+  function loadList() {
+    return call('apiGetProblemList').then(function (res) {
       if (!res.ok) throw new Error(res.error);
-      return res.identity;
+      return res.list;
     }).catch(function () {
-      return { mode: 'anon', email: '' };   // サーバが無いローカル確認時など
+      return localProblems().map(function (p) {
+        return { id: p.id, title: p.title, category: p.category, level: p.level };
+      });
     });
   }
 
@@ -42,8 +54,19 @@
       if (!res.ok) throw new Error(res.error);
       return res.problem;
     }).catch(function () {
-      if (window.__LOCAL_PROBLEM__) return window.__LOCAL_PROBLEM__;
+      var all = localProblems();
+      var found = id ? all.filter(function (p) { return p.id === id; })[0] : all[0];
+      if (found) return found;
       throw new Error('問題を読み込めませんでした。');
+    });
+  }
+
+  function loadIdentity() {
+    return call('apiGetIdentity').then(function (res) {
+      if (!res.ok) throw new Error(res.error);
+      return res.identity;
+    }).catch(function () {
+      return { mode: 'anon', email: '' };   // サーバが無いローカル確認時など
     });
   }
 
@@ -140,18 +163,28 @@
     return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
   }
 
-  function startTimer() {
-    startedAt = Date.now();
-    timerId = setInterval(function () {
-      $('timer').textContent = fmt(elapsed());
-    }, 1000);
-  }
   function elapsed() { return Math.floor((Date.now() - startedAt) / 1000); }
 
-  var CATEGORY = {
-    full: '全断面図', half: '片側断面図', partial: '部分断面図',
-    revolved: '回転図示断面図', offset: '組合せによる断面図'
-  };
+  var VIEW_GAP = 26, VIEW_PAD = 20;
+
+  /** 投影図 1 枚の縦横比（viewBox の幅 ÷ 高さ）。 */
+  function viewAspect(v) {
+    var p = v.grid.pitch || 22;
+    return (v.grid.cols * p + VIEW_PAD * 2) / (v.grid.rows * p + VIEW_PAD * 2);
+  }
+
+  /**
+   * 投影図の枠の幅を決める。
+   * 各図に縦横比に比例した幅を配れば高さが揃い、正面図と側面図が必ず横に並ぶ。
+   * 全体の幅は「収めたい高さ × 縦横比の合計」で決め、狭い画面では CSS 側で縮む。
+   */
+  function fitViews() {
+    var views = (problem && problem.views) || [];
+    if (!views.length) return;
+    var total = views.reduce(function (s, v) { return s + viewAspect(v); }, 0);
+    var maxH = Math.min(window.innerHeight * 0.46, 420);
+    $('views').style.width = Math.round(maxH * total + VIEW_GAP * (views.length - 1)) + 'px';
+  }
 
   function buildViews() {
     var host = $('views');
@@ -159,6 +192,7 @@
     (problem.views || []).forEach(function (v) {
       var wrap = document.createElement('div');
       wrap.className = 'view';
+      wrap.style.flex = viewAspect(v) + ' 1 0';
       var box = document.createElement('div');
       wrap.appendChild(box);
       var cap = document.createElement('div');
@@ -168,10 +202,12 @@
       host.appendChild(wrap);
 
       var s = SecDraw.create(box, {
-        cols: v.grid.cols, rows: v.grid.rows, pitch: v.grid.pitch || 22, editable: false, pad: 20
+        cols: v.grid.cols, rows: v.grid.rows, pitch: v.grid.pitch || 22,
+        editable: false, pad: VIEW_PAD
       });
       s.setStatic(v);
     });
+    fitViews();
   }
 
   function buildAnswer() {
@@ -184,12 +220,56 @@
       editable: true, pad: 18, onChange: refreshUndo
     });
     sheet.setHint(a.hintLines || []);
+    sheet.setTool(curTool);
+    sheet.setKind(curKind);
     sheet.svg.setAttribute('aria-label', '解答欄。方眼の格子点を結んで断面図を作図します。');
+  }
+
+  function buildSelector() {
+    var sel = $('pSelect');
+    sel.innerHTML = '';
+    problemList.forEach(function (p) {
+      var o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = p.title + '（レベル ' + p.level + '）';
+      sel.appendChild(o);
+    });
+    sel.disabled = problemList.length < 2;
+    sel.addEventListener('change', function () { openProblem(sel.value); });
   }
 
   function refreshUndo() {
     $('btnUndo').disabled = !sheet.canUndo();
     $('btnRedo').disabled = !sheet.canRedo();
+  }
+
+  // ── 問題を開く ────────────────────────────────────────────
+  function openProblem(id) {
+    return loadProblem(id).then(function (p) {
+      problem = p;
+      $('pTitle').textContent = p.title;
+      $('pMeta').textContent = (CATEGORY[p.category] || p.category) + '　レベル ' + p.level;
+      $('pInstruction').textContent = p.instruction || '';
+      $('pSelect').value = p.id;
+
+      buildViews();
+      buildAnswer();
+      refreshUndo();
+
+      hintUsed = 0;
+      $('hints').innerHTML = '';
+      $('btnHint').disabled = !(p.hints && p.hints.length);
+      $('result').hidden = true;
+      $('btnGrade').disabled = false;
+      pendingLog = null;
+      $('idbar').classList.remove('needs');
+
+      startedAt = Date.now();
+      $('timer').textContent = '00:00';
+
+      // 動作確認用のフック。tools/build_preview.js が __SEC_TEST__ を立てたときだけ生える。
+      if (window.__SEC_TEST__) window.__SEC_APP__ = { sheet: sheet, problem: problem, grade: grade };
+    });
   }
 
   // ── ツールバー ────────────────────────────────────────────
@@ -205,11 +285,14 @@
 
   function wireToolbar() {
     wireGroup('[data-tool]', function (b) {
-      var t = b.getAttribute('data-tool');
-      sheet.setTool(t);
-      $('kindGroup').style.opacity = (t === 'line') ? '1' : '.45';
+      curTool = b.getAttribute('data-tool');
+      sheet.setTool(curTool);
+      $('kindGroup').style.opacity = (curTool === 'line') ? '1' : '.45';
     });
-    wireGroup('[data-kind]', function (b) { sheet.setKind(b.getAttribute('data-kind')); });
+    wireGroup('[data-kind]', function (b) {
+      curKind = b.getAttribute('data-kind');
+      sheet.setKind(curKind);
+    });
 
     $('btnUndo').addEventListener('click', function () { sheet.undo(); refreshUndo(); });
     $('btnRedo').addEventListener('click', function () { sheet.redo(); refreshUndo(); });
@@ -226,15 +309,10 @@
       sheet.setLocked(false);
       $('btnGrade').disabled = false;
     });
-    $('btnReset').addEventListener('click', function () {
-      sheet.clearAll(); sheet.clearOverlay(); sheet.setLocked(false);
-      $('result').hidden = true; $('btnGrade').disabled = false;
-      hintUsed = 0; $('hints').innerHTML = ''; $('btnHint').disabled = false;
-      startedAt = Date.now(); refreshUndo();
-    });
+    $('btnReset').addEventListener('click', function () { openProblem(problem.id); });
 
     document.addEventListener('keydown', function (e) {
-      if (!(e.ctrlKey || e.metaKey)) return;
+      if (!(e.ctrlKey || e.metaKey) || !sheet) return;
       if (e.key === 'z' && !e.shiftKey) { sheet.undo(); refreshUndo(); e.preventDefault(); }
       else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { sheet.redo(); refreshUndo(); e.preventDefault(); }
     });
@@ -321,23 +399,17 @@
   // ── 起動 ──────────────────────────────────────────────────
   function boot() {
     var id = (typeof BOOT_PROBLEM_ID !== 'undefined' && BOOT_PROBLEM_ID) || null;
-    Promise.all([loadProblem(id), loadIdentity()]).then(function (r) {
-      problem = r[0];
+    Promise.all([loadList(), loadIdentity()]).then(function (r) {
+      problemList = r[0] || [];
       identity = r[1];
       if (identity.mode === 'anon') anon = readStoredAnon();
       renderIdentity();
       wireIdentity();
-      var p = problem;
-      $('pTitle').textContent = p.title;
-      $('pMeta').textContent = (CATEGORY[p.category] || p.category) + '　レベル ' + p.level;
-      $('pInstruction').textContent = p.instruction || '';
-      buildViews();
-      buildAnswer();
+      buildSelector();
       wireToolbar();
-      refreshUndo();
-      startTimer();
-      // 動作確認用のフック。tools/build_preview.js が __SEC_TEST__ を立てたときだけ生える。
-      if (window.__SEC_TEST__) window.__SEC_APP__ = { sheet: sheet, problem: problem, grade: grade };
+      setInterval(function () { $('timer').textContent = fmt(elapsed()); }, 1000);
+      window.addEventListener('resize', fitViews);
+      return openProblem(id || (problemList[0] && problemList[0].id));
     }).catch(function (err) {
       $('pTitle').textContent = '読み込みに失敗しました';
       $('pInstruction').textContent = String(err && err.message ? err.message : err);
