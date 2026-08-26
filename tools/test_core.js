@@ -27,6 +27,47 @@ const PROBLEMS = fs.readdirSync(SAMPLES).filter(f => f.endsWith('.json')).sort()
 const byId = id => PROBLEMS.find(p => p.id === id);
 const correctOf = p => ({ lines: p.answer.lines, hatch: p.answer.hatch });
 
+// ── 問題データの検算に使う、生成ツールとは独立した実装 ────────────────
+// tools/problem_lib.py と同じ結果になるはずのものを JS 側で書き直しておく。
+// 片方だけを直しても検算が通らないので、思い込みで壊しにくくなる。
+const SHAPES = {
+  F:  (x, y) => [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]],
+  BL: (x, y) => [[x, y], [x, y + 1], [x + 1, y + 1]],
+  BR: (x, y) => [[x, y + 1], [x + 1, y + 1], [x + 1, y]],
+  TR: (x, y) => [[x, y], [x + 1, y], [x + 1, y + 1]],
+  TL: (x, y) => [[x, y], [x + 1, y], [x, y + 1]],
+};
+
+/** セル集合の外周（1 回しか現れない辺）を位置キーの集合で返す。 */
+function boundary(cells) {
+  const n = new Map();
+  cells.forEach(([c, r, sh]) => {
+    const pl = SHAPES[sh](c, r);
+    for (let i = 0; i < pl.length; i++) {
+      const k = SecCore.segKey(pl[i], pl[(i + 1) % pl.length]);
+      n.set(k, (n.get(k) || 0) + 1);
+    }
+  });
+  return new Set([...n].filter(([, v]) => v === 1).map(([k]) => k));
+}
+
+const union = (...sets) => new Set(sets.flatMap(s => [...s]));
+const cellKey = c => c[0] + ',' + c[1];
+
+/** 部品の外形（body）から、切断面で材料が無いセル（voids）を除いた切り口。 */
+function cutOf(p) {
+  const voids = new Set(p.authoring.voids.map(cellKey));
+  return p.authoring.body.filter(c => !voids.has(cellKey(c)));
+}
+
+/** リブなど「シルエットには出ないが描く輪郭」のセル。 */
+function ribOf(p) {
+  const trap = (p.traps || []).find(t => t.tag === 'rib-hatched');
+  if (!trap) return [];
+  const keys = new Set(trap.cells.map(cellKey));
+  return p.authoring.body.filter(c => keys.has(cellKey(c)));
+}
+
 let pass = 0, fail = 0;
 function t(name, fn) {
   try { fn(); pass++; console.log('  ok   ' + name); }
@@ -94,8 +135,59 @@ PROBLEMS.forEach(p => {
   });
 
   t(label + ': ハッチングは切り口のセルだけを指している', () => {
-    const solid = new Set(p.authoring.solid.map(c => c[0] + ',' + c[1]));
-    p.answer.hatch.forEach(c => ok(solid.has(c.join(',')), '切り口の外を指している: ' + c));
+    const cut = new Set(cutOf(p).map(cellKey));
+    p.answer.hatch.forEach(c => ok(cut.has(cellKey(c)), '切り口の外を指している: ' + c));
+  });
+
+  t(label + ': 穴のまわりが線で囲まれている', () => {
+    // ★ 断面図は切り口だけを描く図ではない。穴が部品を分断していない限り、
+    //    穴の向こう側の内壁が見えるので、外形線は穴の位置でも途切れない。
+    //    つまり穴の領域は、隣の穴セルと接する辺を除いて、必ず線で囲まれている。
+    //    隣が切り口なら穴の縁、隣が部品の外なら外形線として現れる。
+    const lines = new Set(p.answer.lines.map(s => SecCore.segKey(s[0], s[1])));
+    const voids = new Set(p.authoring.voids.map(cellKey));
+    const missing = [];
+    p.authoring.voids.forEach(([c, r]) => {
+      [[[c, r], [c + 1, r], [c, r - 1], '上'],
+       [[c, r + 1], [c + 1, r + 1], [c, r + 1], '下'],
+       [[c, r], [c, r + 1], [c - 1, r], '左'],
+       [[c + 1, r], [c + 1, r + 1], [c + 1, r], '右']
+      ].forEach(([a, b, nb, name]) => {
+        if (!voids.has(cellKey(nb)) && !lines.has(SecCore.segKey(a, b))) {
+          missing.push('(' + c + ',' + r + ')' + name + '辺');
+        }
+      });
+    });
+    eq(missing, [], '穴のまわりの線の描き漏れ');
+  });
+
+  t(label + ': 外形線は「部品の外形」と「切り口」の輪郭の和集合になっている', () => {
+    const expected = union(boundary(p.authoring.body), boundary(cutOf(p)), boundary(ribOf(p)));
+    const actual = new Set(p.answer.lines.map(s => SecCore.segKey(s[0], s[1])));
+    const extra = [...actual].filter(k => !expected.has(k));
+    const lack = [...expected].filter(k => !actual.has(k));
+    eq(lack, [], '足りない線');
+    eq(extra, [], '余分な線');
+  });
+
+  t(label + ': 切り口は「部品の外形 − 穴」と一致している', () => {
+    eq(cutOf(p).map(cellKey).sort(), p.authoring.cut.map(cellKey).sort());
+  });
+
+  t(label + ': 側面図の外形線は断面図にも現れる', () => {
+    // 投影図と答えの突き合わせ。切断面より奥の見え掛かり線は、
+    // 側面図と断面図で同じ位置に出るはず。片方だけ直すとここで落ちる。
+    const ans = new Set(p.answer.lines.map(s => SecCore.segKey(s[0], s[1])));
+    const side = p.views.find(v => v.name === '側面図');
+    if (!side) return;
+    const missing = [];
+    side.lines.filter(s => s.kind === 'outline').forEach(s => {
+      SecCore.split(s.a, s.b).forEach(u => {
+        const k = SecCore.segKey(u[0], u[1]);
+        if (!ans.has(k)) missing.push(k);
+      });
+    });
+    eq(missing, [], '側面図にあって断面図に無い外形線');
   });
 
   t(label + ': 穴のセルにハッチングが掛かっていない', () => {

@@ -1,11 +1,35 @@
 # -*- coding: utf-8 -*-
-"""断面図の問題データを、部品の切り口（セル集合）から組み立てるための共通処理。
+"""断面図の問題データを、部品の形状（セル集合）から組み立てるための共通処理。
 
-手で線分の座標を並べると投影図と断面図が必ずずれる。そこで
-  1. 部品の切り口を方眼のセル集合として定義し
-  2. 「隣のセルが空である辺」＝外形線として抽出し
-  3. 既約な刻みへ分解して answer.lines にする
-という手順を機械的に行う。tools/make_problems.py がこのライブラリを使う。
+手で線分の座標を並べると投影図と断面図が必ずずれる。そこで部品を方眼のセル集合として
+定義し、外形線を機械的に抽出する。tools/make_problems.py がこのライブラリを使う。
+
+★ 断面図は「切断面の材料」だけを描く図ではない ★
+
+  断面図には、切断面の切り口（ハッチングを施す部分）に加えて、
+  **切断面より奥に見える面の輪郭**も実線で描く。
+
+  たとえば板を貫通穴の中心で切ると、切断面には穴の分だけ材料が無い。
+  しかし穴は板の幅方向には貫通していないので、穴の向こう側には板の材料が残っており、
+  その内壁が見える。したがって板の外形線は穴の位置でも途切れない。
+
+      正しい                  誤り（切り口だけを描いた図）
+      ┌────┐                  ┌────┐
+      │////│                  │////│
+      ├────┤  ← 穴の上面      └────┘
+      │    │  ← 穴（内壁が     　　　　  ← 外形線が途切れてしまう
+      ├────┤     見えている）  ┌────┐
+      │////│                  │////│
+      └────┘                  └────┘
+
+  そこで本ライブラリでは 2 つのセル集合を扱う。
+
+    body  … 断面図に現れる部品の外形。切断面より奥に材料が残る範囲すべて
+    voids … そのうち切断面では材料が無い部分（穴・座ぐり・溝）
+
+  切り口（ハッチングを施す部分）は cut = body − voids。
+  外形線は boundary(body) と boundary(cut) の和集合で求める。
+  幅方向にも貫通していて外形が途切れる溝などは、voids ではなく body から外す。
 
 セルの形状:
   F  全塗り        BL 左下三角   BR 右下三角   TR 右上三角   TL 左上三角
@@ -85,18 +109,27 @@ def to_lines(edges, kind='outline'):
     return [[list(a), list(b), k] for a, b, k in sorted(out)]
 
 
-def make_answer(solid, outline_extra=(), hatch_exclude=()):
-    """切り口のセル集合から answer.lines / answer.hatch を導く。
+def make_answer(body, voids=(), outline_extra=(), hatch_exclude=()):
+    """部品の形状から answer.lines / answer.hatch / 切り口セルを導く。
 
+    body           … 断面図に現れる部品の外形（切断面より奥に材料が残る範囲すべて）
+    voids          … そのうち切断面では材料が無いセル（穴・座ぐり・溝）
     outline_extra  … 部品全体のシルエットには出ないが描くべき輪郭（リブなど）のセル集合
     hatch_exclude  … 切り口だが慣例でハッチングを施さないセル（リブなど）
+
+    @return (lines, hatch, cut)
     """
-    edges = boundary(solid)
+    hole = set(tuple(v) for v in voids)
+    cut = [c for c in body if (c[0], c[1]) not in hole]
+
+    # 外形線 = 部品の外形の輪郭 ＋ 切り口の輪郭（後者が穴の縁を与える）
+    edges = boundary(body) | boundary(cut)
     for region in outline_extra:
         edges |= boundary(region)
+
     skip = set(tuple(c) for c in hatch_exclude)
-    hatch = sorted([[c, r] for c, r, _ in solid if (c, r) not in skip])
-    return to_lines(edges), hatch
+    hatch = sorted([[c, r] for c, r, _ in cut if (c, r) not in skip])
+    return to_lines(edges), hatch, sorted(cut)
 
 
 def hseg(y, x0, x1):
