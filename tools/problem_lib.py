@@ -55,6 +55,9 @@
   そこは座ぐりの面に含める。貫通穴の面は奥行 1–2 だけになる。
   重なったまま渡すと、実際には見えない位置に線が入ってしまう。
 
+  この分け方は手で書かない。tools/solid.py の Part.hole() に
+  「奥行の範囲と半径」で宣言すれば自動で決まる。
+
   外形線 = boundary(body) ∪ boundary(cut) ∪ ⋃ boundary(穴ごとの voids)
 
 セルの形状:
@@ -133,54 +136,6 @@ def to_lines(edges, kind='outline'):
                 ua, ub = ub, ua
             out.add((ua, ub, kind))
     return [[list(a), list(b), k] for a, b, k in sorted(out)]
-
-
-def stepped_hole(cy, sections):
-    """同軸の円筒がならんだ穴（段付き穴・座ぐり穴）を、面ごとのセル集合に展開する。
-
-    穴の「奥行の範囲と半径」だけを書けばよく、面の分け方は自動で決まる。
-    手で分けると重なりや取りこぼしが起きるので、必ずこちらを使う。
-
-    cy       … 穴の中心の高さ（格子座標。小数可）
-    sections … [(名前, 奥行の開始, 奥行の終わり, 半径), …]
-               奥行の範囲は重なってはいけない（同じ奥行で見える面はひとつ）
-
-    @return [{'name':…, 'z':(z0,z1), 'r':…, 'cells':[(c,r),…]}, …]
-    """
-    out, used = [], []
-    for name, z0, z1, r in sections:
-        if z1 <= z0:
-            raise ValueError('%s: 奥行の範囲が空です' % name)
-        for n2, a, b in used:
-            if z0 < b and a < z1:
-                raise ValueError('%s と %s の奥行が重なっています。'
-                                 '同じ奥行で見える面はひとつなので分けること。' % (name, n2))
-        used.append((name, z0, z1))
-        top, bot = cy - r, cy + r
-        if top != int(top) or bot != int(bot):
-            raise ValueError('%s: 半径 %s だと穴の縁が格子点に乗りません（上端 %s / 下端 %s）'
-                             % (name, r, top, bot))
-        out.append({'name': name, 'z': (z0, z1), 'r': r,
-                    'cells': [(c, y) for c in range(z0, z1) for y in range(int(top), int(bot))]})
-    return out
-
-
-def hole_hidden_lines(features, exclude=()):
-    """穴を、切断していない図（側面図など）に描くためのかくれ線。
-
-    面ごとの輪郭の和集合。段差の線も自動で入る。
-    exclude には、その図ですでに実線で描かれている線を渡す（重なる分は描かない）。
-    """
-    edges = set()
-    for f in features:
-        edges |= boundary(as_cells(f['cells']))
-    drop = set()
-    for ln in exclude:
-        a, b = ln['a'], ln['b']
-        for ua, ub in units(a, b):
-            drop.add(tuple(sorted((ua, ub))))
-    return [{"a": list(a), "b": list(b), "kind": "hidden"}
-            for a, b, _ in to_lines(edges - drop)]
 
 
 def assert_rect(cells, idx=0):

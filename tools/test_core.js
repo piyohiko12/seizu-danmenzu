@@ -249,20 +249,20 @@ PROBLEMS.forEach(p => {
     eq(cutOf(p).map(cellKey).sort(), p.authoring.cut.map(cellKey).sort());
   });
 
-  t(label + ': 側面図の外形線は断面図にも現れる', () => {
-    // 投影図と答えの突き合わせ。切断面より奥の見え掛かり線は、
-    // 側面図と断面図で同じ位置に出るはず。片方だけ直すとここで落ちる。
-    const ans = new Set(p.answer.lines.map(s => SecCore.segKey(s[0], s[1])));
+  t(label + ': 断面図の外形は側面図にも現れる', () => {
+    // 投影図と答えの突き合わせ。断面図の外形（部品のシルエット）は、
+    // 側面図にも同じ位置に出るはず。片方だけ直すとここで落ちる。
+    // 逆向き（側面図 ⊆ 断面図）は成り立たない。側面図には、切断面には材料が無い
+    // ところで見えている稜線（柱の脇から見える底板の上面など）も現れるため。
     const side = p.views.find(v => v.name === '側面図');
     if (!side) return;
-    const missing = [];
-    side.lines.filter(s => s.kind === 'outline').forEach(s => {
-      SecCore.split(s.a, s.b).forEach(u => {
-        const k = SecCore.segKey(u[0], u[1]);
-        if (!ans.has(k)) missing.push(k);
-      });
-    });
-    eq(missing, [], '側面図にあって断面図に無い外形線');
+    const isInt = v => Number.isInteger(v);
+    const have = new Set();
+    side.lines.filter(s => s.kind === 'outline' || s.kind === 'hidden')
+      .filter(s => [s.a[0], s.a[1], s.b[0], s.b[1]].every(isInt))
+      .forEach(s => SecCore.split(s.a, s.b).forEach(u => have.add(SecCore.segKey(u[0], u[1]))));
+    const missing = [...boundary(p.authoring.body)].filter(k => !have.has(k));
+    eq(missing, [], '断面図にあって側面図に無い外形線');
   });
 
   t(label + ': 穴のセルにハッチングが掛かっていない', () => {

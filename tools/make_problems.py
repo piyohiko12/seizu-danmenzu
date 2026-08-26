@@ -4,13 +4,17 @@
     python3 tools/make_problems.py
 
 docs/samples/<id>.json を書き出し、src/Problems.gs を作り直す。
-座標は必ずここから生成すること（手で並べると投影図と断面図がずれる）。
+
+部品の形は tools/solid.py の Part に**一度だけ**宣言する。
+正面図・側面図・断面図はすべてそこから導かれるので、
+中心線の描き忘れ・見え掛かり線の描き漏れ・3 面の食い違いが起きない。
+座標を手で並べてはいけない。
 """
 import io, json, os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from problem_lib import (rect, slope_cells, make_answer, stepped_hole,
-                         hole_hidden_lines, hseg, vseg, line, circle)
+from problem_lib import slope_cells, make_answer, hseg, vseg, line
+from solid import Part
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROBLEMS = []
@@ -25,7 +29,7 @@ def AUTHORING(body, hole, cut):
     """検算に使う作問データ。
 
     body  … 断面図に現れる部品の外形
-    voids … 切断面で材料が無い部分。stepped_hole が面ごとに分けたもの（奥行と半径つき）
+    voids … 切断面で材料が無い部分。Part.hole() が面ごとに分けたもの（奥行と半径つき）
     cut   … 切り口 = body − voids
     """
     return {
@@ -33,7 +37,8 @@ def AUTHORING(body, hole, cut):
         "voids": [{"name": f["name"], "z": list(f["z"]), "r": f["r"],
                    "cells": sorted([list(c) for c in f["cells"]])} for f in hole],
         "cut": [[c, r, sh] for c, r, sh in sorted(cut)],
-        "note": ("tools/make_problems.py が生成。穴は stepped_hole に奥行と半径で宣言し、"
+        "note": ("tools/make_problems.py が生成。部品は tools/solid.py の Part に一度だけ宣言し、"
+                 "正面図・側面図・断面図をそこから導いている。穴は奥行と半径で宣言し、"
                  "面の分け方は自動。answer.lines は boundary(body)、boundary(cut)、"
                  "穴の面ごとの boundary の和集合。answer.hatch は cut からリブなどを除いたもの。")
     }
@@ -52,48 +57,28 @@ def VOID_CELLS(hole):
 def bracket():
     D, H, W = 6, 16, 10
     PLATE, BASE_TOP = 2, 13
-    HOLE_CY, BORE_R, HOLE_R = 5.5, 2.5, 1.5   # 穴の中心 / 座ぐり φ5 / 貫通穴 φ3
-    BORE_D = 1                                 # 座ぐりの深さ
     RIB_A, RIB_B = (2, 9), (6, 13)
+    RIB_X = (4, 6)                             # リブの幅方向の位置
+    CUT = W / 2
+    HOLE_CY, FOOT_CY = 5.5, 14.5
 
-    # 穴は「奥行の範囲と半径」で宣言する。面の分け方（＝段差の線の位置）は自動で決まる。
-    # 座ぐりと貫通穴は縦板の幅方向には貫通していないので、外形（body）はそのまま。
-    hole = stepped_hole(HOLE_CY, [('座ぐり φ5', 0, BORE_D, BORE_R),
-                                  ('貫通穴 φ3', BORE_D, PLATE, HOLE_R)])
     rib = slope_cells(RIB_A, RIB_B, BASE_TOP)
-    body = sorted(rect(0, PLATE, 0, BASE_TOP) + rect(0, D, BASE_TOP, H) + rib)
-    lines, hatch, cut = make_answer(body, voids=[f['cells'] for f in hole], outline_extra=[rib],
+    part = Part(W, H, D)
+    part.box('縦板', x=(0, W), y=(0, BASE_TOP), z=(0, PLATE))
+    part.box('底板', x=(0, W), y=(BASE_TOP, H), z=(0, D))
+    part.prism('リブ', x=RIB_X, profile=rib)
+    part.hole('中心の穴', CUT, HOLE_CY,
+              [('座ぐり φ5', 0, 1, 2.5), ('貫通穴 φ3', 1, PLATE, 1.5)])
+    part.hole('取付穴 φ2 左', 2.5, FOOT_CY, [('φ2', 0, D, 1.0)])
+    part.hole('取付穴 φ2 右', 7.5, FOOT_CY, [('φ2', 0, D, 1.0)])
+
+    body, hole = part.section_at(CUT)
+    lines, hatch, cut = make_answer(body, voids=[s['cells'] for s in hole],
+                                    outline_extra=[rib],
                                     hatch_exclude=[(c, r) for c, r, _ in rib])
+    front = part.front_view(pitch=24, cut_x=CUT)
+    side = part.side_view(pitch=24)
 
-    FOOT_CX, FOOT_CY, FOOT_R = (2.5, 7.5), 14.5, 1.0
-
-    front = {
-        "name": "正面図",
-        "grid": {"cols": W, "rows": H, "pitch": 24},
-        "lines": [line((0, 0), (W, 0)), line((W, 0), (W, H)),
-                  line((W, H), (0, H)), line((0, H), (0, 0)),
-                  line((0, HOLE_CY), (W, HOLE_CY), 'center'),
-                  line((0, FOOT_CY), (W, FOOT_CY), 'center'),
-                  line((W / 2, -1), (W / 2, H + 1), 'cut')],
-        "circles": [circle((W / 2, HOLE_CY), BORE_R), circle((W / 2, HOLE_CY), HOLE_R),
-                    circle((FOOT_CX[0], FOOT_CY), FOOT_R),
-                    circle((FOOT_CX[1], FOOT_CY), FOOT_R)],
-        "labels": [{"at": [W / 2, -1], "text": "A"}, {"at": [W / 2, H + 1], "text": "A"}]
-    }
-    side_outline = [line((0, 0), (PLATE, 0)), line((PLATE, 0), (PLATE, BASE_TOP)),
-                    line(RIB_A, RIB_B), line(RIB_B, (D, H)),
-                    line((D, H), (0, H)), line((0, H), (0, 0)),
-                    line((PLATE, BASE_TOP), (D, BASE_TOP))]
-    side = {
-        "name": "側面図",
-        "grid": {"cols": D, "rows": H, "pitch": 24},
-        # 穴のかくれ線は断面図と同じ宣言から導く。段差の線も自動で入る。
-        "lines": side_outline + hole_hidden_lines(hole, side_outline) + [
-            # 底板の取付穴 φ2。奥行方向の穴なので、側面図では横のかくれ線になる
-            line((0, FOOT_CY - FOOT_R), (D, FOOT_CY - FOOT_R), 'hidden'),
-            line((0, FOOT_CY + FOOT_R), (D, FOOT_CY + FOOT_R), 'hidden'),
-            line((0, HOLE_CY), (D, HOLE_CY), 'center')]
-    }
     return add({
         "schemaVersion": 2, "answerMode": "line",
         "id": "sec-a-001", "title": "全断面図 A-A（L 形ブラケット）",
@@ -145,45 +130,23 @@ def bracket():
 # ══════════════════════════════════════════════════════════════════
 def pedestal():
     D, H, W = 8, 12, 12
-    BASE_TOP = 9                          # 底板の上面
-    COL_Z = (2, 6)                        # 柱の奥行の範囲
-    COL_X = (4, 8)                        # 柱の幅の範囲（正面図）
-    HOLE_CY, HOLE_R = 4.5, 1.5            # 柱の貫通穴 φ3
-    FOOT_CX, FOOT_CY, FOOT_R = (2.0, 10.0), 10.5, 1.0
+    BASE_TOP = 9                              # 底板の上面
+    COL_Z, COL_X = (2, 6), (4, 8)             # 柱の奥行 / 幅
+    CUT = W / 2
+    HOLE_CY, FOOT_CY = 4.5, 10.5
 
-    # 貫通穴は柱の幅方向には貫通していないので、外形（body）は柱をそのまま含む。
-    hole = stepped_hole(HOLE_CY, [('貫通穴 φ3', COL_Z[0], COL_Z[1], HOLE_R)])
-    body = sorted(rect(COL_Z[0], COL_Z[1], 0, BASE_TOP) + rect(0, D, BASE_TOP, H))
-    lines, hatch, cut = make_answer(body, voids=[f['cells'] for f in hole])
+    part = Part(W, H, D)
+    part.box('底板', x=(0, W), y=(BASE_TOP, H), z=(0, D))
+    part.box('柱',   x=COL_X, y=(0, BASE_TOP), z=COL_Z)
+    part.hole('柱の貫通穴 φ3', CUT, HOLE_CY, [('φ3', COL_Z[0], COL_Z[1], 1.5)])
+    part.hole('取付穴 φ2 左',  2.0, FOOT_CY, [('φ2', 0, D, 1.0)])
+    part.hole('取付穴 φ2 右', 10.0, FOOT_CY, [('φ2', 0, D, 1.0)])
 
-    front = {
-        "name": "正面図",
-        "grid": {"cols": W, "rows": H, "pitch": 24},
-        "lines": [line((COL_X[0], 0), (COL_X[1], 0)), line((COL_X[1], 0), (COL_X[1], BASE_TOP)),
-                  line((COL_X[1], BASE_TOP), (W, BASE_TOP)), line((W, BASE_TOP), (W, H)),
-                  line((W, H), (0, H)), line((0, H), (0, BASE_TOP)),
-                  line((0, BASE_TOP), (COL_X[0], BASE_TOP)), line((COL_X[0], BASE_TOP), (COL_X[0], 0)),
-                  line((0, HOLE_CY), (W, HOLE_CY), 'center'),
-                  line((0, FOOT_CY), (W, FOOT_CY), 'center'),
-                  line((W / 2, -1), (W / 2, H + 1), 'cut')],
-        "circles": [circle((W / 2, HOLE_CY), HOLE_R),
-                    circle((FOOT_CX[0], FOOT_CY), FOOT_R),
-                    circle((FOOT_CX[1], FOOT_CY), FOOT_R)],
-        "labels": [{"at": [W / 2, -1], "text": "A"}, {"at": [W / 2, H + 1], "text": "A"}]
-    }
-    side_outline = [line((COL_Z[0], 0), (COL_Z[1], 0)), line((COL_Z[1], 0), (COL_Z[1], BASE_TOP)),
-                    line((COL_Z[1], BASE_TOP), (D, BASE_TOP)), line((D, BASE_TOP), (D, H)),
-                    line((D, H), (0, H)), line((0, H), (0, BASE_TOP)),
-                    line((0, BASE_TOP), (COL_Z[0], BASE_TOP)),
-                    line((COL_Z[0], BASE_TOP), (COL_Z[0], 0))]
-    side = {
-        "name": "側面図",
-        "grid": {"cols": D, "rows": H, "pitch": 24},
-        "lines": side_outline + hole_hidden_lines(hole, side_outline) + [
-            line((0, FOOT_CY - FOOT_R), (D, FOOT_CY - FOOT_R), 'hidden'),
-            line((0, FOOT_CY + FOOT_R), (D, FOOT_CY + FOOT_R), 'hidden'),
-            line((0, HOLE_CY), (D, HOLE_CY), 'center')]
-    }
+    body, hole = part.section_at(CUT)
+    lines, hatch, cut = make_answer(body, voids=[s['cells'] for s in hole])
+    front = part.front_view(pitch=24, cut_x=CUT)
+    side = part.side_view(pitch=24)
+
     return add({
         "schemaVersion": 2, "answerMode": "line",
         "id": "sec-a-002", "title": "全断面図 A-A（T 形の台座）",
@@ -232,40 +195,23 @@ def pedestal():
 # ══════════════════════════════════════════════════════════════════
 def bearing():
     D, H, W = 8, 12, 12
-    CY = H // 2                            # 軸線の高さ（row 6）
-    FLANGE_R, BODY_R = 6, 4                # φ12 / φ8
-    BIG_R, SMALL_R = 3, 2                  # 段付き穴 φ6 / φ4
-    FLANGE_D, STEP_D = 2, 3                # フランジの厚さ / 段付き穴の段の位置
+    CY = H // 2                                # 軸線の高さ
+    FLANGE_R, BODY_R = 6, 4                    # φ12 / φ8
+    BIG_R, SMALL_R = 3, 2                      # 段付き穴 φ6 / φ4
+    FLANGE_D, STEP_D = 2, 3                    # フランジの厚さ / 段の位置
+    CUT = W / 2
 
-    # 段付き穴は回転体の中心にあり、外形を分断しない。外形（body）は円筒をそのまま含む。
-    # 穴は「奥行の範囲と半径」で宣言する。段差の線の位置は自動で決まる。
-    hole = stepped_hole(CY, [('大径穴 φ6', 0, STEP_D, BIG_R),
-                             ('小径穴 φ4', STEP_D, D, SMALL_R)])
-    body = sorted(rect(0, FLANGE_D, 0, H) + rect(FLANGE_D, D, CY - BODY_R, CY + BODY_R))
-    lines, hatch, cut = make_answer(body, voids=[f['cells'] for f in hole])
+    part = Part(W, H, D)
+    part.cyl('フランジ φ12', CUT, CY, FLANGE_R, z=(0, FLANGE_D))
+    part.cyl('胴 φ8',        CUT, CY, BODY_R,   z=(FLANGE_D, D))
+    part.hole('段付き穴', CUT, CY, [('大径穴 φ6', 0, STEP_D, BIG_R),
+                                    ('小径穴 φ4', STEP_D, D, SMALL_R)])
 
-    front = {
-        "name": "正面図",
-        "grid": {"cols": W, "rows": H, "pitch": 24},
-        "lines": [line((0, CY), (W, CY), 'center'),
-                  line((W / 2, -1), (W / 2, H + 1), 'cut')],
-        # 胴 φ8 はフランジ φ12 の後ろに隠れるので、正面図ではかくれ線になる。
-        "circles": [circle((W / 2, CY), FLANGE_R), circle((W / 2, CY), BODY_R, 'hidden'),
-                    circle((W / 2, CY), BIG_R), circle((W / 2, CY), SMALL_R)],
-        "labels": [{"at": [W / 2, -1], "text": "A"}, {"at": [W / 2, H + 1], "text": "A"}]
-    }
-    side_outline = [line((0, 0), (FLANGE_D, 0)), line((FLANGE_D, 0), (FLANGE_D, CY - BODY_R)),
-                    line((FLANGE_D, CY - BODY_R), (D, CY - BODY_R)),
-                    line((D, CY - BODY_R), (D, CY + BODY_R)),
-                    line((D, CY + BODY_R), (FLANGE_D, CY + BODY_R)),
-                    line((FLANGE_D, CY + BODY_R), (FLANGE_D, H)),
-                    line((FLANGE_D, H), (0, H)), line((0, H), (0, 0))]
-    side = {
-        "name": "側面図",
-        "grid": {"cols": D, "rows": H, "pitch": 24},
-        "lines": side_outline + hole_hidden_lines(hole, side_outline)
-                 + [line((0, CY), (D, CY), 'center')]
-    }
+    body, hole = part.section_at(CUT)
+    lines, hatch, cut = make_answer(body, voids=[s['cells'] for s in hole])
+    front = part.front_view(pitch=24, cut_x=CUT)
+    side = part.side_view(pitch=24)
+
     return add({
         "schemaVersion": 2, "answerMode": "line",
         "id": "sec-a-003", "title": "全断面図 A-A（段付き軸受）",
