@@ -12,11 +12,55 @@ Google Apps Script（GAS）のウェブアプリとして構築する。
 
 | フェーズ | 状態 |
 |---|---|
-| **起案・立案（本ドキュメント一式）** | ✅ 完了 |
-| 方針決定（下記「意思決定待ち」の確定） | ⏳ 未着手 |
-| Phase 1: MVP 実装 | ⏳ 未着手 |
+| Phase 0: 起案・立案／方針確定 | ✅ 完了 |
+| **Phase 1: MVP（動く 1 問）** | ✅ 実装済み（実機確認とデプロイが残り） |
+| Phase 2: 問題バンク | ⏳ 未着手 |
+| Phase 3: 学習記録・作問ツール | ⏳ 未着手 |
+| Phase 4: 断面図の種類の拡張 | ⏳ 未着手 |
 
-実装コードはまだありません。まずは企画・要件・設計を固めます。
+Phase 1 でできること — 投影図（正面図・側面図・切断線 A-A）を見ながら、
+方眼の格子点を結んで断面図を作図し、ハッチングを施して採点を受ける。
+誤りは色分けで示され、JIS の規則名付きのフィードバックと解説が返る。
+
+## 動かしてみる
+
+**ブラウザだけで確認する**（GAS 不要）
+
+```bash
+node tools/build_preview.js          # build/preview.html を生成
+node tools/build_preview.js build/demo.html --demo      # 誤答を入れて採点済みの状態
+node tools/build_preview.js build/ans.html  --correct   # 正解を入れた状態
+```
+
+生成された HTML をブラウザで開く。
+
+**採点ロジックのテスト**
+
+```bash
+node tools/test_core.js
+```
+
+**サンプル問題を作り直す**
+
+```bash
+python3 tools/make_sample_problem.py   # docs/samples/problem_a_full_section.json を再生成
+```
+
+問題データを変えたら `src/Problems.gs` の `SEC_A_001` にも同じ JSON を反映すること。
+
+**GAS へデプロイする**
+
+```bash
+npm install -g @google/clasp
+clasp login
+cp .clasp.json.example .clasp.json    # scriptId を記入
+clasp push
+clasp deploy -d "v0.1.0 MVP"
+```
+
+デプロイ設定は「実行するユーザー: 自分」「アクセスできるユーザー: 同じ組織内の全員」。
+解答ログを残す場合は、スクリプトプロパティ `RESULT_SHEET_ID` に記録先スプレッドシートの ID を設定する
+（未設定でもアプリは動き、記録だけが行われない）。
 
 ---
 
@@ -27,36 +71,48 @@ Google Apps Script（GAS）のウェブアプリとして構築する。
 | 01 | [企画書](docs/01_企画書.md) | 背景・目的・ターゲット・提供価値・KPI・スコープ・GAS 採用理由 |
 | 02 | [要件定義](docs/02_要件定義.md) | ユースケース／機能要件／画面一覧／非機能要件／学習内容の範囲 |
 | 03 | [設計方針](docs/03_設計方針.md) | システム構成／GAS ファイル構成／サーバ API／スプレッドシート設計／GAS 制約と対策 |
-| 04 | [データモデルと採点方式](docs/04_データモデルと採点.md) | 座標系／問題 JSON スキーマ／解答 JSON／採点アルゴリズム／フィードバック規則 |
-| 05 | [開発ロードマップ](docs/05_ロードマップ.md) | フェーズ計画／成果物／完了条件／リスク／意思決定待ち事項 |
+| 04 | [データモデルと採点方式](docs/04_データモデルと採点.md) | 座標系／線分の正規化／問題 JSON スキーマ／採点アルゴリズム／フィードバック規則 |
+| 05 | [開発ロードマップ](docs/05_ロードマップ.md) | フェーズ計画／完了条件／リスク／決定事項 |
 
-サンプルデータ: [`docs/samples/problem_a_full_section.json`](docs/samples/problem_a_full_section.json)
+サンプル問題: [`docs/samples/problem_a_full_section.json`](docs/samples/problem_a_full_section.json)
+
+### 決まっていること
+
+- **解答方式は自由線描画方式** — 格子点どうしを結んで線を引き、線種（外形線・かくれ線・中心線）を選ぶ。
+  ハッチングは領域をセル単位で指定する
+- 引き方の違いを吸収するため、線分は**既約な刻み**へ分解し端点の順序をそろえて比較する。
+  一気に引いても小刻みに引いても、逆向きに引いても同じ答えになる
+- 採点は `60 × 線の一致度 + 40 × ハッチングの一致度 − 減点`。一致度は Jaccard 係数
 
 ---
 
-## 技術スタック（予定）
+## 技術スタック
 
 - **サーバ**: Google Apps Script（`Code.gs` ほか）
 - **画面**: HtmlService + 素の HTML/CSS/JS（フレームワークなし）、作図領域は **SVG**
-- **データ**: Google スプレッドシート（問題マスタ／学習記録）、PropertiesService（設定）、CacheService（キャッシュ）
+- **データ**: Google スプレッドシート（解答ログ）、PropertiesService（設定）
 - **開発**: [clasp](https://github.com/google/clasp) でローカル編集 → Git 管理 → `clasp push`
 
-## ディレクトリ構成（予定）
+## ディレクトリ構成
 
 ```
 .
 ├── README.md
 ├── docs/                     # 企画・設計ドキュメント
+│   └── samples/              # 問題データのサンプル
 ├── src/                      # clasp のプッシュ対象
 │   ├── appsscript.json
 │   ├── Code.gs               # doGet / include / API エントリ
-│   ├── ProblemRepo.gs        # 問題データの取得・キャッシュ
-│   ├── Grader.gs             # 採点ロジック（サーバ側の正解判定）
-│   ├── ResultRepo.gs         # 学習記録の読み書き
+│   ├── Problems.gs           # 問題データ（Phase 2 でスプレッドシートへ移す）
+│   ├── ResultRepo.gs         # 解答ログの追記（LockService）
 │   ├── index.html            # 画面テンプレート
 │   ├── css.html
-│   ├── js_app.html           # 画面制御
-│   ├── js_canvas.html        # グリッド作図エンジン（SVG）
-│   └── js_api.html           # google.script.run ラッパ
+│   ├── js_core.html          # 線分の正規化と採点（GAS 非依存の素の JS）
+│   ├── js_draw.html          # SVG 作図エンジン
+│   └── js_app.html           # 画面の組み立てと配線
+├── tools/
+│   ├── test_core.js          # 採点ロジックの単体テスト
+│   ├── build_preview.js      # GAS なしでブラウザ確認する HTML を生成
+│   └── make_sample_problem.py# サンプル問題の生成
 └── .clasp.json.example
 ```

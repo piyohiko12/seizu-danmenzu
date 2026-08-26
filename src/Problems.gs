@@ -1,4 +1,13 @@
-{
+/**
+ * 問題データ。
+ *
+ * Phase 1 はこのファイルに 1 問だけ埋め込む。
+ * Phase 2 でスプレッドシート（problems シート）からの読み込みに差し替える。
+ * 元データ: docs/samples/problem_a_full_section.json（内容は同一に保つこと）
+ */
+var Problems = (function () {
+
+  var SEC_A_001 = {
   "schemaVersion": 2,
   "answerMode": "line",
   "id": "sec-a-001",
@@ -1468,4 +1477,27 @@
     ],
     "note": "tools/make_sample_problem.py が生成。answer.lines / answer.hatch はこの solid から導出。"
   }
-}
+};
+
+  var ALL = [SEC_A_001];
+
+  function defaultId() {
+    return ALL[0].id;
+  }
+
+  function list() {
+    return ALL.map(function (p) {
+      return { id: p.id, title: p.title, category: p.category, level: p.level };
+    });
+  }
+
+  function get(id) {
+    if (!id) id = defaultId();
+    for (var i = 0; i < ALL.length; i++) {
+      if (ALL[i].id === id) return ALL[i];
+    }
+    return null;
+  }
+
+  return { defaultId: defaultId, list: list, get: get };
+})();

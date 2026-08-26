@@ -1,0 +1,450 @@
+<script>
+/**
+ * SecDraw — 方眼の上に線を引く／ハッチングを施すための SVG 作図エンジン。
+ *
+ * 生徒は格子点どうしを結んで線を引く。引いた線は SecCore.split で既約な刻みへ
+ * 分解して保持するため、「一気に引く」「小刻みに引く」の違いは残らない。
+ */
+var SecDraw = (function () {
+
+  var NS = 'http://www.w3.org/2000/svg';
+  var KINDS = {
+    outline: { w: 2.4, dash: '' },
+    hidden:  { w: 1.5, dash: '6 3.5' },
+    center:  { w: 1.1, dash: '11 3 2 3' },
+    cut:     { w: 1.4, dash: '11 3 2 3' }
+  };
+
+  function el(name, attrs) {
+    var e = document.createElementNS(NS, name);
+    for (var k in attrs) if (attrs[k] !== null && attrs[k] !== undefined) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  /** 点と線分の距離（格子単位）。消しゴムの当たり判定に使う。 */
+  function distToSeg(p, a, b) {
+    var vx = b[0] - a[0], vy = b[1] - a[1];
+    var wx = p[0] - a[0], wy = p[1] - a[1];
+    var len2 = vx * vx + vy * vy;
+    var t = len2 === 0 ? 0 : clamp((wx * vx + wy * vy) / len2, 0, 1);
+    var dx = wx - t * vx, dy = wy - t * vy;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function create(host, opts) {
+    var cols = opts.cols, rows = opts.rows, pitch = opts.pitch || 26;
+    var pad = opts.pad === undefined ? 16 : opts.pad;
+    var editable = !!opts.editable;
+    var onChange = opts.onChange || function () {};
+    var patternId = 'hx-' + Math.random().toString(36).slice(2, 8);
+
+    var svg = el('svg', {
+      viewBox: (-pad) + ' ' + (-pad) + ' ' + (cols * pitch + pad * 2) + ' ' + (rows * pitch + pad * 2),
+      class: 'sheet-svg' + (editable ? ' editable' : ''),
+      tabindex: editable ? '0' : null,
+      role: 'img'
+    });
+    svg.style.touchAction = 'none';
+
+    var defs = el('defs');
+    var pat = el('pattern', {
+      id: patternId, width: 8, height: 8,
+      patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)'
+    });
+    pat.appendChild(el('line', { x1: 0, y1: 0, x2: 0, y2: 8, class: 'hatch-line' }));
+    defs.appendChild(pat);
+    svg.appendChild(defs);
+
+    var L = {};
+    ['grid', 'hatch', 'hint', 'answer', 'diff', 'line', 'dots', 'ghost'].forEach(function (n) {
+      L[n] = el('g', { class: 'l-' + n });
+      svg.appendChild(L[n]);
+    });
+    host.appendChild(svg);
+
+    // ── モデル ────────────────────────────────────────────────
+    var lines = new Map();   // 位置キー → 線種
+    var hatch = new Set();   // セルキー
+    var undoStack = [], redoStack = [], batch = null;
+    var tool = 'line', kind = 'outline', locked = false;
+
+    function snapshot() {
+      return JSON.stringify([[].concat.apply([], [Array.from(lines)]), Array.from(hatch)]);
+    }
+    function restore(s) {
+      var v = JSON.parse(s);
+      lines = new Map(v[0]);
+      hatch = new Set(v[1]);
+      draw();
+      onChange();
+    }
+    function beginBatch() { if (!batch) batch = snapshot(); }
+    function endBatch() {
+      if (batch === null) return;
+      if (batch !== snapshot()) { undoStack.push(batch); redoStack.length = 0; onChange(); }
+      batch = null;
+    }
+
+    // ── 描画 ──────────────────────────────────────────────────
+    function drawGrid() {
+      clear(L.grid);
+      for (var i = 0; i <= cols; i++)
+        L.grid.appendChild(el('line', { x1: i * pitch, y1: 0, x2: i * pitch, y2: rows * pitch }));
+      for (var j = 0; j <= rows; j++)
+        L.grid.appendChild(el('line', { x1: 0, y1: j * pitch, x2: cols * pitch, y2: j * pitch }));
+    }
+
+    function drawDots() {
+      clear(L.dots);
+      if (!editable) return;
+      for (var i = 0; i <= cols; i++)
+        for (var j = 0; j <= rows; j++)
+          L.dots.appendChild(el('circle', { cx: i * pitch, cy: j * pitch, r: 1.5 }));
+    }
+
+    function segEl(key, k, cls) {
+      var v = key.split(',').map(Number);
+      var spec = KINDS[k] || KINDS.outline;
+      return el('line', {
+        x1: v[0] * pitch, y1: v[1] * pitch, x2: v[2] * pitch, y2: v[3] * pitch,
+        'stroke-width': spec.w, 'stroke-dasharray': spec.dash || null,
+        class: cls + ' k-' + k
+      });
+    }
+
+    function drawLines() {
+      clear(L.line);
+      lines.forEach(function (k, key) { L.line.appendChild(segEl(key, k, 'seg')); });
+    }
+
+    function hatchRect(c, r, cls) {
+      return el('rect', {
+        x: c * pitch, y: r * pitch, width: pitch, height: pitch,
+        fill: cls ? null : 'url(#' + patternId + ')', class: cls || 'hatch-cell'
+      });
+    }
+
+    function drawHatch() {
+      clear(L.hatch);
+      hatch.forEach(function (key) {
+        var v = key.split(',').map(Number);
+        L.hatch.appendChild(hatchRect(v[0], v[1]));
+      });
+    }
+
+    function draw() { drawHatch(); drawLines(); }
+
+    // ── 出題図（読み取り専用）────────────────────────────────
+    function setStatic(view) {
+      clear(L.hint);
+      (view.lines || []).forEach(function (s) {
+        var k = s.kind || s[2] || 'outline';
+        var a = s.a || s[0], b = s.b || s[1];
+        var spec = KINDS[k] || KINDS.outline;
+        L.hint.appendChild(el('line', {
+          x1: a[0] * pitch, y1: a[1] * pitch, x2: b[0] * pitch, y2: b[1] * pitch,
+          'stroke-width': spec.w, 'stroke-dasharray': spec.dash || null, class: 'seg k-' + k
+        }));
+        if (k === 'cut') {
+          // 切断線は両端を太くする（JIS B 0001）。
+          [[a, b], [b, a]].forEach(function (pair) {
+            var p = pair[0], q = pair[1];
+            var dx = q[0] - p[0], dy = q[1] - p[1];
+            var len = Math.sqrt(dx * dx + dy * dy) || 1;
+            L.hint.appendChild(el('line', {
+              x1: p[0] * pitch, y1: p[1] * pitch,
+              x2: (p[0] + dx / len * 0.7) * pitch, y2: (p[1] + dy / len * 0.7) * pitch,
+              'stroke-width': 3.6, class: 'seg k-cut-end'
+            }));
+          });
+        }
+      });
+      (view.circles || []).forEach(function (c) {
+        L.hint.appendChild(el('circle', {
+          cx: c.c[0] * pitch, cy: c.c[1] * pitch, r: c.r * pitch,
+          'stroke-width': (KINDS[c.kind] || KINDS.outline).w,
+          'stroke-dasharray': (KINDS[c.kind] || KINDS.outline).dash || null,
+          class: 'seg k-' + (c.kind || 'outline'), fill: 'none'
+        }));
+      });
+      (view.labels || []).forEach(function (lb) {
+        var x = lb.at[0] * pitch, y = lb.at[1] * pitch;
+        var tri = el('polygon', {
+          points: [(x + 13) + ',' + y, (x + 3) + ',' + (y - 4), (x + 3) + ',' + (y + 4)].join(' '),
+          class: 'cut-arrow'
+        });
+        L.hint.appendChild(tri);
+        var tx = el('text', { x: x + 18, y: y + 5, class: 'cut-label' });
+        tx.textContent = lb.text;
+        L.hint.appendChild(tx);
+      });
+      svg.setAttribute('aria-label', (view.name || '図') + 'の投影図');
+    }
+
+    /** 解答欄にあらかじめ引いておく線（中心線など）。採点対象外。 */
+    function setHint(list) {
+      clear(L.hint);
+      (list || []).forEach(function (s) {
+        var k = s.kind || s[2] || 'center';
+        var a = s.a || s[0], b = s.b || s[1];
+        var spec = KINDS[k] || KINDS.center;
+        L.hint.appendChild(el('line', {
+          x1: a[0] * pitch, y1: a[1] * pitch, x2: b[0] * pitch, y2: b[1] * pitch,
+          'stroke-width': spec.w, 'stroke-dasharray': spec.dash || null, class: 'seg k-' + k
+        }));
+      });
+    }
+
+    // ── 採点結果の重ね表示 ────────────────────────────────────
+    function showDiff(diff) {
+      clear(L.diff);
+      (diff.missingHatch || []).forEach(function (c) {
+        L.diff.appendChild(hatchRect(c[0], c[1], 'cell-missing'));
+      });
+      (diff.extraHatch || []).forEach(function (c) {
+        L.diff.appendChild(hatchRect(c[0], c[1], 'cell-extra'));
+      });
+      (diff.missingLines || []).forEach(function (s) {
+        L.diff.appendChild(el('line', {
+          x1: s[0][0] * pitch, y1: s[0][1] * pitch, x2: s[1][0] * pitch, y2: s[1][1] * pitch,
+          class: 'diff-missing'
+        }));
+      });
+      (diff.extraLines || []).forEach(function (s) {
+        L.diff.appendChild(el('line', {
+          x1: s[0][0] * pitch, y1: s[0][1] * pitch, x2: s[1][0] * pitch, y2: s[1][1] * pitch,
+          class: 'diff-extra'
+        }));
+      });
+      (diff.wrongKind || []).forEach(function (w) {
+        L.diff.appendChild(el('line', {
+          x1: w.seg[0][0] * pitch, y1: w.seg[0][1] * pitch,
+          x2: w.seg[1][0] * pitch, y2: w.seg[1][1] * pitch,
+          class: 'diff-kind'
+        }));
+      });
+    }
+
+    /** 正解を半透明で重ねる（解説用）。 */
+    function showAnswer(ansLines, ansHatch) {
+      clear(L.answer);
+      (ansHatch || []).forEach(function (c) {
+        L.answer.appendChild(el('rect', {
+          x: c[0] * pitch, y: c[1] * pitch, width: pitch, height: pitch, class: 'ans-hatch'
+        }));
+      });
+      (ansLines || []).forEach(function (s) {
+        L.answer.appendChild(el('line', {
+          x1: s[0][0] * pitch, y1: s[0][1] * pitch, x2: s[1][0] * pitch, y2: s[1][1] * pitch,
+          class: 'ans-line'
+        }));
+      });
+    }
+
+    function clearOverlay() { clear(L.diff); clear(L.answer); }
+
+    // ── 入力 ──────────────────────────────────────────────────
+    var pt = svg.createSVGPoint();
+    function toGrid(ev) {
+      pt.x = ev.clientX; pt.y = ev.clientY;
+      var m = svg.getScreenCTM();
+      if (!m) return null;
+      var p = pt.matrixTransform(m.inverse());
+      return [p.x / pitch, p.y / pitch];
+    }
+    function snapNode(g) {
+      return [clamp(Math.round(g[0]), 0, cols), clamp(Math.round(g[1]), 0, rows)];
+    }
+    function snapCell(g) {
+      if (g[0] < 0 || g[0] > cols || g[1] < 0 || g[1] > rows) return null;
+      return [clamp(Math.floor(g[0]), 0, cols - 1), clamp(Math.floor(g[1]), 0, rows - 1)];
+    }
+
+    function addSeg(a, b) {
+      SecCore.split(a, b).forEach(function (u) { lines.set(SecCore.segKey(u[0], u[1]), kind); });
+    }
+    function eraseAt(g) {
+      var best = null, bestD = 0.3;
+      lines.forEach(function (_, key) {
+        var v = key.split(',').map(Number);
+        var d = distToSeg(g, [v[0], v[1]], [v[2], v[3]]);
+        if (d < bestD) { bestD = d; best = key; }
+      });
+      if (best) { lines.delete(best); return true; }
+      var c = snapCell(g);
+      if (c && hatch.delete(SecCore.cellKey(c))) return true;
+      return false;
+    }
+
+    var anchor = null, hatchTarget = null, dragging = false;
+
+    function ghostLine(a, b) {
+      clear(L.ghost);
+      if (!a || !b) return;
+      L.ghost.appendChild(el('line', {
+        x1: a[0] * pitch, y1: a[1] * pitch, x2: b[0] * pitch, y2: b[1] * pitch, class: 'ghost'
+      }));
+      L.ghost.appendChild(el('circle', { cx: a[0] * pitch, cy: a[1] * pitch, r: 3.5, class: 'anchor' }));
+    }
+
+    function onDown(ev) {
+      if (!editable || locked) return;
+      var g = toGrid(ev); if (!g) return;
+      svg.setPointerCapture(ev.pointerId);
+      dragging = true;
+      beginBatch();
+      if (tool === 'line') {
+        anchor = snapNode(g);
+        ghostLine(anchor, anchor);
+      } else if (tool === 'hatch') {
+        var c = snapCell(g);
+        if (c) {
+          hatchTarget = !hatch.has(SecCore.cellKey(c));
+          applyHatch(c);
+        }
+      } else if (tool === 'erase') {
+        eraseAt(g); draw();
+      }
+      ev.preventDefault();
+    }
+
+    function applyHatch(c) {
+      var k = SecCore.cellKey(c);
+      if (hatchTarget) hatch.add(k); else hatch.delete(k);
+      drawHatch();
+    }
+
+    function onMove(ev) {
+      if (!editable || locked || !dragging) return;
+      var g = toGrid(ev); if (!g) return;
+      if (tool === 'line' && anchor) ghostLine(anchor, snapNode(g));
+      else if (tool === 'hatch' && hatchTarget !== null) { var c = snapCell(g); if (c) applyHatch(c); }
+      else if (tool === 'erase') { if (eraseAt(g)) draw(); }
+    }
+
+    function onUp(ev) {
+      if (!editable || locked || !dragging) return;
+      dragging = false;
+      if (tool === 'line' && anchor) {
+        var g = toGrid(ev);
+        var end = g ? snapNode(g) : null;
+        if (end && (end[0] !== anchor[0] || end[1] !== anchor[1])) { addSeg(anchor, end); draw(); }
+        anchor = null;
+        clear(L.ghost);
+      }
+      hatchTarget = null;
+      endBatch();
+    }
+
+    if (editable) {
+      svg.addEventListener('pointerdown', onDown);
+      svg.addEventListener('pointermove', onMove);
+      svg.addEventListener('pointerup', onUp);
+      svg.addEventListener('pointercancel', onUp);
+    }
+
+    // ── キーボード操作 ────────────────────────────────────────
+    var cur = [0, 0], kbAnchor = null;
+    function drawCursor() {
+      var old = svg.querySelector('.kb-cursor');
+      if (old) old.parentNode.removeChild(old);
+      if (document.activeElement !== svg) return;
+      var c = tool === 'hatch'
+        ? el('rect', { x: cur[0] * pitch, y: cur[1] * pitch, width: pitch, height: pitch, class: 'kb-cursor' })
+        : el('circle', { cx: cur[0] * pitch, cy: cur[1] * pitch, r: 5, class: 'kb-cursor' });
+      L.ghost.appendChild(c);
+    }
+    function onKey(ev) {
+      if (!editable || locked) return;
+      var max = tool === 'hatch' ? [cols - 1, rows - 1] : [cols, rows];
+      var d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[ev.key];
+      if (d) {
+        cur = [clamp(cur[0] + d[0], 0, max[0]), clamp(cur[1] + d[1], 0, max[1])];
+        clear(L.ghost);
+        if (kbAnchor) ghostLine(kbAnchor, cur);
+        drawCursor();
+        ev.preventDefault();
+        return;
+      }
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        beginBatch();
+        if (tool === 'hatch') {
+          hatchTarget = !hatch.has(SecCore.cellKey(cur));
+          applyHatch(cur);
+        } else if (tool === 'erase') {
+          eraseAt(cur); draw();
+        } else if (kbAnchor) {
+          if (kbAnchor[0] !== cur[0] || kbAnchor[1] !== cur[1]) { addSeg(kbAnchor, cur); draw(); }
+          kbAnchor = null;
+          clear(L.ghost); drawCursor();
+        } else {
+          kbAnchor = cur.slice();
+          ghostLine(kbAnchor, cur); drawCursor();
+        }
+        endBatch();
+        ev.preventDefault();
+      } else if (ev.key === 'Escape') {
+        kbAnchor = null; clear(L.ghost); drawCursor(); ev.preventDefault();
+      } else if (ev.key === 'Backspace' || ev.key === 'Delete') {
+        beginBatch(); if (eraseAt(cur)) draw(); endBatch(); ev.preventDefault();
+      }
+    }
+    if (editable) {
+      svg.addEventListener('keydown', onKey);
+      svg.addEventListener('focus', drawCursor);
+      svg.addEventListener('blur', function () { kbAnchor = null; clear(L.ghost); });
+    }
+
+    drawGrid(); drawDots(); draw();
+
+    return {
+      svg: svg,
+      setStatic: setStatic,
+      setHint: setHint,
+      setTool: function (t) { tool = t; kbAnchor = null; clear(L.ghost); drawCursor(); },
+      setKind: function (k) { kind = k; },
+      setLocked: function (v) { locked = v; svg.classList.toggle('locked', v); },
+      getAnswer: function () {
+        var out = [];
+        lines.forEach(function (k, key) {
+          var v = key.split(',').map(Number);
+          out.push([[v[0], v[1]], [v[2], v[3]], k]);
+        });
+        return { lines: out, hatch: Array.from(hatch).map(function (k) { return k.split(',').map(Number); }) };
+      },
+      isEmpty: function () { return lines.size === 0 && hatch.size === 0; },
+      /** 解答を流し込む（途中保存の復元・作問ツール・動作確認で使う）。 */
+      setAnswer: function (a) {
+        beginBatch();
+        lines = SecCore.normalizeLines((a && a.lines) || []);
+        hatch = SecCore.normalizeHatch((a && a.hatch) || []);
+        draw();
+        endBatch();
+      },
+      counts: function () { return { lines: lines.size, hatch: hatch.size }; },
+      undo: function () {
+        if (!undoStack.length) return;
+        redoStack.push(snapshot());
+        restore(undoStack.pop());
+      },
+      redo: function () {
+        if (!redoStack.length) return;
+        undoStack.push(snapshot());
+        restore(redoStack.pop());
+      },
+      canUndo: function () { return undoStack.length > 0; },
+      canRedo: function () { return redoStack.length > 0; },
+      clearAll: function () {
+        beginBatch(); lines.clear(); hatch.clear(); draw(); endBatch();
+      },
+      showDiff: showDiff,
+      showAnswer: showAnswer,
+      clearOverlay: clearOverlay
+    };
+  }
+
+  return { create: create };
+})();
+</script>

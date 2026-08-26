@@ -1,0 +1,251 @@
+<script>
+/**
+ * 画面の組み立てと配線。
+ *
+ * サーバ（google.script.run）が無い環境では window.__LOCAL_PROBLEM__ を使って
+ * そのまま動く。tools/build_preview.js がローカル確認用の HTML を作る。
+ */
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var problem = null, sheet = null, startedAt = 0, timerId = null, hintUsed = 0;
+
+  // ── サーバ呼び出し（無ければローカルデータへ退避）──────────
+  function call(fn, args) {
+    return new Promise(function (resolve, reject) {
+      if (typeof google === 'undefined' || !google.script || !google.script.run) {
+        return reject(new Error('no-server'));
+      }
+      var runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+      runner[fn].apply(runner, args || []);
+    });
+  }
+
+  function loadProblem(id) {
+    return call('apiGetProblem', [id]).then(function (res) {
+      if (!res.ok) throw new Error(res.error);
+      return res.problem;
+    }).catch(function () {
+      if (window.__LOCAL_PROBLEM__) return window.__LOCAL_PROBLEM__;
+      throw new Error('問題を読み込めませんでした。');
+    });
+  }
+
+  // ── 表示 ──────────────────────────────────────────────────
+  function toast(msg) {
+    var t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast._id);
+    toast._id = setTimeout(function () { t.classList.remove('show'); }, 2200);
+  }
+
+  function fmt(sec) {
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function startTimer() {
+    startedAt = Date.now();
+    timerId = setInterval(function () {
+      $('timer').textContent = fmt(elapsed());
+    }, 1000);
+  }
+  function elapsed() { return Math.floor((Date.now() - startedAt) / 1000); }
+
+  var CATEGORY = {
+    full: '全断面図', half: '片側断面図', partial: '部分断面図',
+    revolved: '回転図示断面図', offset: '組合せによる断面図'
+  };
+
+  function buildViews() {
+    var host = $('views');
+    host.innerHTML = '';
+    (problem.views || []).forEach(function (v) {
+      var wrap = document.createElement('div');
+      wrap.className = 'view';
+      var box = document.createElement('div');
+      wrap.appendChild(box);
+      var cap = document.createElement('div');
+      cap.className = 'cap';
+      cap.textContent = v.name || '';
+      wrap.appendChild(cap);
+      host.appendChild(wrap);
+
+      var s = SecDraw.create(box, {
+        cols: v.grid.cols, rows: v.grid.rows, pitch: v.grid.pitch || 22, editable: false, pad: 20
+      });
+      s.setStatic(v);
+    });
+  }
+
+  function buildAnswer() {
+    var a = problem.answerArea;
+    $('answerTitle').textContent = '(答) ' + (a.title || '');
+    var host = $('answerSheet');
+    host.innerHTML = '';
+    sheet = SecDraw.create(host, {
+      cols: a.grid.cols, rows: a.grid.rows, pitch: a.grid.pitch || 26,
+      editable: true, pad: 18, onChange: refreshUndo
+    });
+    sheet.setHint(a.hintLines || []);
+    sheet.svg.setAttribute('aria-label', '解答欄。方眼の格子点を結んで断面図を作図します。');
+  }
+
+  function refreshUndo() {
+    $('btnUndo').disabled = !sheet.canUndo();
+    $('btnRedo').disabled = !sheet.canRedo();
+  }
+
+  // ── ツールバー ────────────────────────────────────────────
+  function wireGroup(selector, apply) {
+    var btns = Array.prototype.slice.call(document.querySelectorAll(selector));
+    btns.forEach(function (b) {
+      b.addEventListener('click', function () {
+        btns.forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+        apply(b);
+      });
+    });
+  }
+
+  function wireToolbar() {
+    wireGroup('[data-tool]', function (b) {
+      var t = b.getAttribute('data-tool');
+      sheet.setTool(t);
+      $('kindGroup').style.opacity = (t === 'line') ? '1' : '.45';
+    });
+    wireGroup('[data-kind]', function (b) { sheet.setKind(b.getAttribute('data-kind')); });
+
+    $('btnUndo').addEventListener('click', function () { sheet.undo(); refreshUndo(); });
+    $('btnRedo').addEventListener('click', function () { sheet.redo(); refreshUndo(); });
+    $('btnClear').addEventListener('click', function () {
+      if (sheet.isEmpty()) return;
+      if (confirm('作図をすべて消します。よろしいですか？')) { sheet.clearAll(); refreshUndo(); }
+    });
+    $('btnHint').addEventListener('click', showHint);
+    $('btnGrade').addEventListener('click', grade);
+    $('btnExplain').addEventListener('click', showExplain);
+    $('btnRetry').addEventListener('click', function () {
+      $('result').hidden = true;
+      sheet.clearOverlay();
+      sheet.setLocked(false);
+      $('btnGrade').disabled = false;
+    });
+    $('btnReset').addEventListener('click', function () {
+      sheet.clearAll(); sheet.clearOverlay(); sheet.setLocked(false);
+      $('result').hidden = true; $('btnGrade').disabled = false;
+      hintUsed = 0; $('hints').innerHTML = ''; $('btnHint').disabled = false;
+      startedAt = Date.now(); refreshUndo();
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key === 'z' && !e.shiftKey) { sheet.undo(); refreshUndo(); e.preventDefault(); }
+      else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { sheet.redo(); refreshUndo(); e.preventDefault(); }
+    });
+  }
+
+  function showHint() {
+    var list = problem.hints || [];
+    if (hintUsed >= list.length) { toast('ヒントはこれ以上ありません。'); return; }
+    var li = document.createElement('p');
+    li.className = 'hintline';
+    li.innerHTML = '<span class="n">ヒント ' + (hintUsed + 1) + '</span><span></span>';
+    li.lastChild.textContent = list[hintUsed];
+    $('hints').appendChild(li);
+    hintUsed++;
+    if (hintUsed >= list.length) $('btnHint').disabled = true;
+  }
+
+  // ── 採点 ──────────────────────────────────────────────────
+  function grade() {
+    var answer = sheet.getAnswer();
+    if (answer.lines.length === 0 && answer.hatch.length === 0) {
+      toast('まだ何も描かれていません。');
+      return;
+    }
+    var result = SecCore.grade(problem, answer);
+    renderResult(result);
+    sheet.showDiff(result.diff);
+    sheet.setLocked(true);
+    $('btnGrade').disabled = true;
+
+    var meta = { elapsedSec: elapsed(), hintUsed: hintUsed };
+    call('apiSubmit', [problem.id, answer, result, meta]).catch(function () {
+      // 記録できなくても採点結果の表示は続ける（ローカル確認時など）。
+    });
+  }
+
+  function renderResult(r) {
+    var res = $('result');
+    res.hidden = false;
+    $('score').textContent = r.score;
+    $('score').className = 'score mono ' + (r.passed ? 'ok' : 'ng');
+    $('verdict').textContent = r.passed ? '正解です' : 'もう少し';
+    $('scoreNote').textContent = '線 60 点 + ハッチング 40 点 − 減点 ' + r.detail.penalty + ' 点';
+
+    var lp = Math.round(r.detail.line * 100), hp = Math.round(r.detail.hatch * 100);
+    $('linePct').textContent = lp + '%';
+    $('hatchPct').textContent = hp + '%';
+    $('lineBar').style.width = lp + '%';
+    $('hatchBar').style.width = hp + '%';
+
+    var fb = $('feedback');
+    fb.innerHTML = '';
+    if (r.feedback.length === 0 && r.passed) {
+      var li0 = document.createElement('li');
+      li0.innerHTML = '<span class="tag">complete</span>';
+      li0.appendChild(document.createTextNode(
+        '切り口の形もハッチングの範囲も正しく描けています。'));
+      fb.appendChild(li0);
+    }
+    r.feedback.forEach(function (f) {
+      var li = document.createElement('li');
+      var tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = f.tag;
+      li.appendChild(tag);
+      li.appendChild(document.createTextNode(f.message));
+      fb.appendChild(li);
+    });
+
+    $('explain').hidden = true;
+    $('btnExplain').disabled = false;
+    res.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function showExplain() {
+    sheet.showAnswer(problem.answer.lines, problem.answer.hatch);
+    var e = $('explain');
+    e.textContent = problem.explain || '';
+    e.hidden = false;
+    $('btnExplain').disabled = true;
+    toast('正解を重ねて表示しました。');
+  }
+
+  // ── 起動 ──────────────────────────────────────────────────
+  function boot() {
+    var id = (typeof BOOT_PROBLEM_ID !== 'undefined' && BOOT_PROBLEM_ID) || null;
+    loadProblem(id).then(function (p) {
+      problem = p;
+      $('pTitle').textContent = p.title;
+      $('pMeta').textContent = (CATEGORY[p.category] || p.category) + '　レベル ' + p.level;
+      $('pInstruction').textContent = p.instruction || '';
+      buildViews();
+      buildAnswer();
+      wireToolbar();
+      refreshUndo();
+      startTimer();
+      // 動作確認用のフック。tools/build_preview.js が __SEC_TEST__ を立てたときだけ生える。
+      if (window.__SEC_TEST__) window.__SEC_APP__ = { sheet: sheet, problem: problem, grade: grade };
+    }).catch(function (err) {
+      $('pTitle').textContent = '読み込みに失敗しました';
+      $('pInstruction').textContent = String(err && err.message ? err.message : err);
+    });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+</script>

@@ -1,0 +1,117 @@
+<!-- 製図・断面図トレーニング — 画面本体 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700&family=BIZ+UDPGothic:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<?!= include('css'); ?>
+
+<div class="app">
+  <header class="bar">
+    <div>
+      <div class="brand">製図・断面図トレーニング</div>
+      <div class="title-row">
+        <h1 id="pTitle">読み込み中…</h1>
+        <span class="badge" id="pMeta"></span>
+      </div>
+    </div>
+    <div class="timer mono" id="timer" aria-label="経過時間">00:00</div>
+  </header>
+
+  <p class="instruction" id="pInstruction"></p>
+
+  <div class="work">
+    <section class="panel">
+      <h2>与えられた投影図</h2>
+      <div class="views" id="views"></div>
+    </section>
+
+    <section class="panel">
+      <h2 id="answerTitle">(答)</h2>
+      <div class="answer-wrap">
+        <div id="answerSheet"></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="toolbar">
+    <div class="tgroup">
+      <span class="lbl">ツール</span>
+      <div class="seg-btns" role="group" aria-label="ツール">
+        <button type="button" data-tool="line"  aria-pressed="true">線を引く</button>
+        <button type="button" data-tool="hatch" aria-pressed="false">ハッチング</button>
+        <button type="button" data-tool="erase" aria-pressed="false">消しゴム</button>
+      </div>
+    </div>
+
+    <div class="tgroup" id="kindGroup">
+      <span class="lbl">線種</span>
+      <div class="seg-btns" role="group" aria-label="線種">
+        <button type="button" data-kind="outline" aria-pressed="true">外形線</button>
+        <button type="button" data-kind="hidden"  aria-pressed="false">かくれ線</button>
+        <button type="button" data-kind="center"  aria-pressed="false">中心線</button>
+      </div>
+    </div>
+
+    <div class="tgroup">
+      <button type="button" id="btnUndo" disabled>元に戻す</button>
+      <button type="button" id="btnRedo" disabled>やり直し</button>
+      <button type="button" id="btnClear">全消去</button>
+    </div>
+
+    <div class="spacer"></div>
+    <div class="tgroup">
+      <button type="button" id="btnHint">ヒント</button>
+      <button type="button" id="btnGrade" class="primary">採点する</button>
+    </div>
+  </div>
+
+  <div id="hints"></div>
+
+  <p class="keyhelp">
+    キーボードでも作図できます —
+    作図欄を選んで <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> で移動、
+    <kbd>Enter</kbd> で始点を決めてもう一度 <kbd>Enter</kbd> で線を引く、
+    <kbd>Esc</kbd> で取り消し、<kbd>Backspace</kbd> で消去。
+  </p>
+
+  <section class="result" id="result" hidden aria-live="polite">
+    <div class="result-head">
+      <div class="score mono" id="score">0</div>
+      <div>
+        <div class="verdict" id="verdict"></div>
+        <div class="mono" id="scoreNote" style="font-size:12px;color:var(--ink-3);"></div>
+      </div>
+    </div>
+
+    <div class="bars">
+      <div class="bar">
+        <div class="bl"><span>線（外形線・かくれ線）</span><span id="linePct">0%</span></div>
+        <div class="track"><div class="fill" id="lineBar" style="width:0"></div></div>
+      </div>
+      <div class="bar">
+        <div class="bl"><span>ハッチング</span><span id="hatchPct">0%</span></div>
+        <div class="track"><div class="fill" id="hatchBar" style="width:0"></div></div>
+      </div>
+    </div>
+
+    <ul class="fb" id="feedback"></ul>
+
+    <div class="legend">
+      <span><i style="background:var(--miss)"></i>足りない線・ハッチング</span>
+      <span><i style="background:var(--extra)"></i>余分な線・ハッチング</span>
+      <span><i style="background:var(--kindw)"></i>線種の間違い</span>
+    </div>
+
+    <div class="explain" id="explain" hidden></div>
+
+    <div class="actions">
+      <button type="button" id="btnExplain">解説と正解を見る</button>
+      <button type="button" id="btnRetry" class="primary">続けて直す</button>
+      <button type="button" id="btnReset">最初からやり直す</button>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>var BOOT_PROBLEM_ID = <?!= JSON.stringify(problemId) ?>;</script>
+<?!= include('js_core'); ?>
+<?!= include('js_draw'); ?>
+<?!= include('js_app'); ?>
