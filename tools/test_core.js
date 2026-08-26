@@ -54,10 +54,15 @@ function boundary(cells) {
 const union = (...sets) => new Set(sets.flatMap(s => [...s]));
 const cellKey = c => c[0] + ',' + c[1];
 
+/** 穴のセルをすべてまとめた集合。voids は穴の面ごとに分かれている。 */
+function voidCells(p) {
+  return p.authoring.voids.flatMap(v => v.cells);
+}
+
 /** 部品の外形（body）から、切断面で材料が無いセル（voids）を除いた切り口。 */
 function cutOf(p) {
-  const voids = new Set(p.authoring.voids.map(cellKey));
-  return p.authoring.body.filter(c => !voids.has(cellKey(c)));
+  const holes = new Set(voidCells(p).map(cellKey));
+  return p.authoring.body.filter(c => !holes.has(cellKey(c)));
 }
 
 /** リブなど「シルエットには出ないが描く輪郭」のセル。 */
@@ -145,9 +150,9 @@ PROBLEMS.forEach(p => {
     //    つまり穴の領域は、隣の穴セルと接する辺を除いて、必ず線で囲まれている。
     //    隣が切り口なら穴の縁、隣が部品の外なら外形線として現れる。
     const lines = new Set(p.answer.lines.map(s => SecCore.segKey(s[0], s[1])));
-    const voids = new Set(p.authoring.voids.map(cellKey));
+    const voids = new Set(voidCells(p).map(cellKey));
     const missing = [];
-    p.authoring.voids.forEach(([c, r]) => {
+    voidCells(p).forEach(([c, r]) => {
       [[[c, r], [c + 1, r], [c, r - 1], '上'],
        [[c, r + 1], [c + 1, r + 1], [c, r + 1], '下'],
        [[c, r], [c, r + 1], [c - 1, r], '左'],
@@ -161,8 +166,78 @@ PROBLEMS.forEach(p => {
     eq(missing, [], '穴のまわりの線の描き漏れ');
   });
 
-  t(label + ': 外形線は「部品の外形」と「切り口」の輪郭の和集合になっている', () => {
-    const expected = union(boundary(p.authoring.body), boundary(cutOf(p)), boundary(ribOf(p)));
+  t(label + ': 穴の面どうしは重なっていない', () => {
+    const seen = new Set(), dup = [];
+    voidCells(p).forEach(c => {
+      const k = cellKey(c);
+      if (seen.has(k)) dup.push(k); else seen.add(k);
+    });
+    eq(dup, [], '重なっているセル');
+  });
+
+  t(label + ': 穴の面がそれぞれ長方形になっている', () => {
+    // 穴の面は「同軸の円筒 1 段ぶん」＝ 奥行の範囲 × 直径 なので長方形になる。
+    // 段付き穴をひとつの面にまとめると L 字などになり、ここで落ちる。
+    const bad = [];
+    p.authoring.voids.forEach(v => {
+      const xs = v.cells.map(c => c[0]), ys = v.cells.map(c => c[1]);
+      const w = Math.max(...xs) - Math.min(...xs) + 1;
+      const h = Math.max(...ys) - Math.min(...ys) + 1;
+      if (new Set(v.cells.map(cellKey)).size !== w * h) {
+        bad.push(v.name + '(' + v.cells.length + 'セル, 外接' + w + 'x' + h + ')');
+      }
+    });
+    eq(bad, [], '長方形でない穴の面');
+  });
+
+  t(label + ': 段差の線が大径側の全直径にわたっている', () => {
+    // 宣言された半径から直接確かめる。穴の径が変わるところでは、
+    // 大きいほうの直径いっぱいに段差の線が引かれていなければならない。
+    const lines = new Set(p.answer.lines.map(s => SecCore.segKey(s[0], s[1])));
+    const vs = p.authoring.voids.slice().sort((a, b) => a.z[0] - b.z[0]);
+    const missing = [];
+    for (let i = 0; i + 1 < vs.length; i++) {
+      const a = vs[i], b = vs[i + 1];
+      if (a.z[1] !== b.z[0]) continue;                       // 奥行がつながっていない
+      const x = a.z[1];
+      const cy = Math.min(...a.cells.map(c => c[1])) + a.r;  // 穴の中心の高さ
+      const R = Math.max(a.r, b.r);
+      for (let y = cy - R; y < cy + R; y++) {
+        if (!lines.has(SecCore.segKey([x, y], [x, y + 1]))) missing.push(x + ',' + y);
+      }
+    }
+    eq(missing, [], '段差の線の描き漏れ');
+  });
+
+  t(label + ': 径が変わる境目に線がある', () => {
+    // ★ 穴の途中で径が変わると、切断面より奥に見える面が切り替わる。
+    //    見える面が変われば稜線＝実線が現れる。しかもそれは大径側の全直径にわたる。
+    //    面が違う穴セルどうしが接する辺には、必ず線がある。
+    const lines = new Set(p.answer.lines.map(s => SecCore.segKey(s[0], s[1])));
+    const owner = new Map();
+    p.authoring.voids.forEach((v, i) => v.cells.forEach(c => owner.set(cellKey(c), i)));
+    const missing = [];
+    p.authoring.voids.forEach((v, i) => v.cells.forEach(([c, r]) => {
+      [[[c, r], [c + 1, r], [c, r - 1], '上'],
+       [[c, r + 1], [c + 1, r + 1], [c, r + 1], '下'],
+       [[c, r], [c, r + 1], [c - 1, r], '左'],
+       [[c + 1, r], [c + 1, r + 1], [c + 1, r], '右']
+      ].forEach(([a, b, nb, name]) => {
+        const j = owner.get(cellKey(nb));
+        if (j !== undefined && j !== i && !lines.has(SecCore.segKey(a, b))) {
+          missing.push('(' + c + ',' + r + ')' + name + '辺');
+        }
+      });
+    }));
+    eq(missing, [], '径が変わる境目の線の描き漏れ');
+  });
+
+  t(label + ': 外形線は「部品の外形」「切り口」「穴の面ごと」の輪郭の和集合になっている', () => {
+    const expected = union(
+      boundary(p.authoring.body),
+      boundary(cutOf(p)),
+      boundary(ribOf(p)),
+      ...p.authoring.voids.map(v => boundary(v.cells.map(c => [c[0], c[1], 'F']))));
     const actual = new Set(p.answer.lines.map(s => SecCore.segKey(s[0], s[1])));
     const extra = [...actual].filter(k => !expected.has(k));
     const lack = [...expected].filter(k => !actual.has(k));
@@ -192,9 +267,7 @@ PROBLEMS.forEach(p => {
 
   t(label + ': 穴のセルにハッチングが掛かっていない', () => {
     const hatch = new Set(p.answer.hatch.map(c => c.join(',')));
-    (p.traps || []).filter(x => x.tag === 'hole-hatched').forEach(trap => {
-      trap.cells.forEach(c => ok(!hatch.has(c.join(',')), '穴 ' + c + ' にハッチングが掛かっている'));
-    });
+    voidCells(p).forEach(c => ok(!hatch.has(cellKey(c)), '穴 ' + c + ' にハッチングが掛かっている'));
   });
 
   t(label + ': 白紙は 0 点', () => {

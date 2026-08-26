@@ -25,11 +25,37 @@
   そこで本ライブラリでは 2 つのセル集合を扱う。
 
     body  … 断面図に現れる部品の外形。切断面より奥に材料が残る範囲すべて
-    voids … そのうち切断面では材料が無い部分（穴・座ぐり・溝）
+    voids … そのうち切断面では材料が無い部分（穴・座ぐり・溝）。
+            ★ 面ごとに分けて宣言する（下記）
 
   切り口（ハッチングを施す部分）は cut = body − voids。
-  外形線は boundary(body) と boundary(cut) の和集合で求める。
   幅方向にも貫通していて外形が途切れる溝などは、voids ではなく body から外す。
+
+★ 穴の径が変わるところにも線が要る ★
+
+  穴の途中で径が変わると、切断面より奥に見える面が「大径穴の壁」から
+  「小径穴の壁」へ切り替わる。見える面が変われば、そこには稜線＝実線が現れる。
+  これは大径穴の**全直径**にわたって起きるので、段差の線は穴を横切る 1 本になる。
+
+      正しい                      誤り（材料との境だけを描いた図）
+      ┌──────────────┐            ┌──────────────┐
+      │//////////////│            │//////////////│
+      ├─────┬────────┤            ├─────┐────────┤
+      │     │////////│            │     │////////│
+      │大径 │        │            │大径 │        │   ← 段差の線が
+      │     ├────────┤            │     ├────────┤      穴を横切らない
+      │     │  小径  │            │     │  小径  │
+      └─────┴────────┘            └─────┴────────┘
+
+  そこで voids は「そのセルで見えている面が同じになる範囲」ごとに分けて渡す。
+  径の違う穴どうしが接する辺は、それぞれの輪郭として線になる。
+
+  面は**重なってはいけない**。たとえば手前面の座ぐり φ5（奥行 0–1）と
+  貫通穴 φ3（奥行 0–2）なら、奥行 0–1 の範囲で見えているのは座ぐりの壁なので、
+  そこは座ぐりの面に含める。貫通穴の面は奥行 1–2 だけになる。
+  重なったまま渡すと、実際には見えない位置に線が入ってしまう。
+
+  外形線 = boundary(body) ∪ boundary(cut) ∪ ⋃ boundary(穴ごとの voids)
 
 セルの形状:
   F  全塗り        BL 左下三角   BR 右下三角   TR 右上三角   TL 左上三角
@@ -109,21 +135,113 @@ def to_lines(edges, kind='outline'):
     return [[list(a), list(b), k] for a, b, k in sorted(out)]
 
 
+def stepped_hole(cy, sections):
+    """同軸の円筒がならんだ穴（段付き穴・座ぐり穴）を、面ごとのセル集合に展開する。
+
+    穴の「奥行の範囲と半径」だけを書けばよく、面の分け方は自動で決まる。
+    手で分けると重なりや取りこぼしが起きるので、必ずこちらを使う。
+
+    cy       … 穴の中心の高さ（格子座標。小数可）
+    sections … [(名前, 奥行の開始, 奥行の終わり, 半径), …]
+               奥行の範囲は重なってはいけない（同じ奥行で見える面はひとつ）
+
+    @return [{'name':…, 'z':(z0,z1), 'r':…, 'cells':[(c,r),…]}, …]
+    """
+    out, used = [], []
+    for name, z0, z1, r in sections:
+        if z1 <= z0:
+            raise ValueError('%s: 奥行の範囲が空です' % name)
+        for n2, a, b in used:
+            if z0 < b and a < z1:
+                raise ValueError('%s と %s の奥行が重なっています。'
+                                 '同じ奥行で見える面はひとつなので分けること。' % (name, n2))
+        used.append((name, z0, z1))
+        top, bot = cy - r, cy + r
+        if top != int(top) or bot != int(bot):
+            raise ValueError('%s: 半径 %s だと穴の縁が格子点に乗りません（上端 %s / 下端 %s）'
+                             % (name, r, top, bot))
+        out.append({'name': name, 'z': (z0, z1), 'r': r,
+                    'cells': [(c, y) for c in range(z0, z1) for y in range(int(top), int(bot))]})
+    return out
+
+
+def hole_hidden_lines(features, exclude=()):
+    """穴を、切断していない図（側面図など）に描くためのかくれ線。
+
+    面ごとの輪郭の和集合。段差の線も自動で入る。
+    exclude には、その図ですでに実線で描かれている線を渡す（重なる分は描かない）。
+    """
+    edges = set()
+    for f in features:
+        edges |= boundary(as_cells(f['cells']))
+    drop = set()
+    for ln in exclude:
+        a, b = ln['a'], ln['b']
+        for ua, ub in units(a, b):
+            drop.add(tuple(sorted((ua, ub))))
+    return [{"a": list(a), "b": list(b), "kind": "hidden"}
+            for a, b, _ in to_lines(edges - drop)]
+
+
+def assert_rect(cells, idx=0):
+    """穴の面が長方形になっているか確かめる。
+
+    穴の面は「同軸の円筒 1 段ぶん」＝ 奥行の範囲 × 直径 なので、必ず長方形になる。
+    段付き穴をひとつの面にまとめると L 字などになり、ここで弾かれる。
+    """
+    pts = set((c, r) for c, r, _ in cells)
+    if not pts:
+        return
+    xs = [c for c, _ in pts]
+    ys = [r for _, r in pts]
+    w = max(xs) - min(xs) + 1
+    h = max(ys) - min(ys) + 1
+    if len(pts) != w * h:
+        raise ValueError(
+            'voids の %d 番目の面が長方形になっていません（%d セル、外接 %d×%d）。\n'
+            '穴の面は同軸の円筒 1 段ぶん（奥行の範囲 × 直径）なので長方形になります。\n'
+            '径の違う段をひとつの面にまとめていませんか。stepped_hole を使ってください。'
+            % (idx, len(pts), w, h))
+
+
+def as_cells(cells):
+    """(c, r) と (c, r, 形状) のどちらで書かれていても (c, r, 形状) にそろえる。"""
+    return [tuple(x) if len(x) == 3 else (x[0], x[1], 'F') for x in cells]
+
+
 def make_answer(body, voids=(), outline_extra=(), hatch_exclude=()):
     """部品の形状から answer.lines / answer.hatch / 切り口セルを導く。
 
     body           … 断面図に現れる部品の外形（切断面より奥に材料が残る範囲すべて）
-    voids          … そのうち切断面では材料が無いセル（穴・座ぐり・溝）
+    voids          … 切断面では材料が無い部分。**穴 1 つ＝面 1 つ**ごとに分けて渡す
+                     （例: [座ぐりのセル集合, 貫通穴のセル集合]）。
+                     径の違う穴どうしが接する辺を線にするために分ける必要がある。
     outline_extra  … 部品全体のシルエットには出ないが描くべき輪郭（リブなど）のセル集合
     hatch_exclude  … 切り口だが慣例でハッチングを施さないセル（リブなど）
 
     @return (lines, hatch, cut)
     """
-    hole = set(tuple(v) for v in voids)
+    features = [as_cells(f) for f in voids]
+    for i, f in enumerate(features):
+        assert_rect(f, i)
+    seen = set()
+    for f in features:
+        for c, r, _ in f:
+            if (c, r) in seen:
+                raise ValueError(
+                    'voids の面が重なっている: (%d, %d)。'
+                    'そのセルで見えている面はひとつなので、どちらか一方に含めること。' % (c, r))
+            seen.add((c, r))
+    hole = set(seen)
     cut = [c for c in body if (c[0], c[1]) not in hole]
 
-    # 外形線 = 部品の外形の輪郭 ＋ 切り口の輪郭（後者が穴の縁を与える）
+    # 外形線 = 部品の外形の輪郭 ＋ 切り口の輪郭 ＋ 穴ごとの輪郭
+    #   boundary(body)     … 穴の位置でも途切れない部品の外形
+    #   boundary(cut)      … 穴と材料の境（穴の縁）
+    #   boundary(穴ごと)   … 径の違う穴どうしの境（段差の線）
     edges = boundary(body) | boundary(cut)
+    for f in features:
+        edges |= boundary(f)
     for region in outline_extra:
         edges |= boundary(region)
 
